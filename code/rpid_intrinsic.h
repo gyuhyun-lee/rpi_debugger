@@ -32,8 +32,6 @@
 
 #elif RPID_MSVC
 
-#endif
-
 inline u32
 count_set_bit(u32 value, u32 size_in_bytes)
 {
@@ -238,4 +236,6 @@ reverse_bits(u8 value)
 
     return result;
 }
+
+#endif
 

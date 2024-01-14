@@ -159,7 +159,7 @@ start_memory_arena(void *base, size_t size, b32 should_be_zero = true)
     // TODO/gh :zeroing memory every time might not be a best idea
     if(should_be_zero)
     {
-        zero_memory(result.base, result.total_size);
+        // zero_memory(result.base, result.total_size);
     }
 
     return result;
@@ -239,7 +239,7 @@ start_temp_memory(MemoryArena *memory_arena, size_t size, b32 should_be_zero = t
     memory_arena->temp_memory_count++;
     if(should_be_zero)
     {
-        zero_memory(result.base, result.total_size);
+        // zero_memory(result.base, result.total_size);
     }
     }
 
