@@ -42,3 +42,4 @@ Thumbs.db
 *.metallibsym
 code/\
 \
+/rpi_debugger
