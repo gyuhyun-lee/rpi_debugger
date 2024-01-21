@@ -15,7 +15,7 @@ COMPILER_FLAGS = -g -Wall -O0 -std=c++11 -lstdc++ -lm -pthread -D RPID_DEBUG=1 -
 # prefix the name of the warning with 'no-' to disable certain warning
 COMPILER_IGNORE_WARNINGS = -Wno-unused-variable -Wno-unused-function -Wno-deprecated-declarations -Wno-writable-strings -Wno-switch -Wno-objc-missing-super-calls -Wno-missing-braces -Wnonportable-include-path -Wno-uninitialized -Wno-nonportable-include-path -Wno-tautological-bitwise-compare -Wno-unused-but-set-variable
 
-all : make_directory make_app compile_main cleanup
+all : make_directory make_app compile_main get_disassembly cleanup
 
 make_directory : 
 	mkdir -p $(MACOS_BUILD_PATH)
@@ -28,6 +28,12 @@ make_app :
 
 compile_main : $(MAIN_CODE_PATH)/macos_rpid.mm
 	$(COMPILER) $(ARCHITECTURE) $(COMPILER_FLAGS) $(COMPILER_IGNORE_WARNINGS) $(MACOS_FRAMEWORK) -o $(MACOS_EXE_PATH)/rpi_debugger $(MAIN_CODE_PATH)/macos_rpid.mm 
+
+get_disassembly : $(MACOS_EXE_PATH)/rpi_debugger
+	# -d diassemble
+	# -S show source code
+	# --sysm show symbol table
+	objdump -d --line-numbers -S --arch=arm64 --syms $(MACOS_EXE_PATH)/rpi_debugger > $(MACOS_EXE_PATH)/rpi_debugger.s
 
 #clean all the object files.
 cleanup : 

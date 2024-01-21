@@ -13,13 +13,15 @@
 #import <metal/metal.h>
 #import <MetalPerformanceShaders/MetalPerformanceShaders.h>
 
+// need to undef these from the macos framework 
+// so that we can define these ourselves
 #undef internal
 #undef assert
 
 #include "rpid_types.h"
 #include "rpid_intrinsic.h"
 #include "rpid_platform.h"
-#include "ftd2xx.h"
+#include "rpid_ftdi.cpp" 
 
 // TODO(gh): Get rid of global variables?
 global v2 last_mouse_p;
@@ -370,46 +372,6 @@ macos_load_game_code(MacOSGameCode *game_code, char *file_name)
     }
 }
 
-// FTDI functions that the debugger doesn't need to use.
-// the function types are defined as the original function name + _
-#define PLATFORM_FT_ListDevices(name) u32 (name)(void *arg0, void *arg1, void *flags)
-typedef PLATFORM_FT_ListDevices(FT_ListDevices_);
-
-// when getting a handle to a ftdi device, there are multiple ways to do it.
-// I think we can just check the serial number, and then use that as a constant value - which would be the simplest way of doing this
-// VID = 0403h,  PID = 6014h
-#define PLATFORM_FT_OpenEx(name) u32 (name)(void *arg0, u32 flags, void *handle)
-typedef PLATFORM_FT_OpenEx(FT_OpenEx_);
-
-#define PLATFORM_FT_Open(name) u32 (name)(int iDevice, void **ft_handle)
-typedef PLATFORM_FT_Open(FT_Open_);
-
-#define PLATFORM_FT_SetBaudRate(name) u32 (name)(void *ft_handle, u32 baud_rate)
-typedef PLATFORM_FT_SetBaudRate(FT_SetBaudRate_);
-
-#define PLATFORM_FT_Write(name) u32 (name)(void *ft_handle, void *buffer, u32 bytes_to_write, u32 *bytes_written);
-typedef PLATFORM_FT_Write(FT_Write_);
-
-#define PLATFORM_FT_Read(name) u32 (name)(void *ft_handle, void *buffer, u32 bytes_to_read, u32 *bytes_read);
-typedef PLATFORM_FT_Read(FT_Read_);
-
-// we need to use this function to configure the cable to be a
-// Multi-Protocol Synchronous Serial Engine  (MPSSE) mode = 0x2
-#define PLATFORM_FT_SetBitMode(name) u32 (name)(void *handle, u8 mask, u8 mode)
-typedef PLATFORM_FT_SetBitMode(FT_SetBitMode_);
-
-#define PLATFORM_FT_SetLatencyTimer(name) u32 (name)(void *handle, u8 timer)
-typedef PLATFORM_FT_SetLatencyTimer(FT_SetLatencyTimer_);
-
-#define PLATFORM_FT_SetTimeouts(name) u32 (name)(void *handle, u32 read_timeout, u32 write_timeout)
-typedef PLATFORM_FT_SetTimeouts(FT_SetTimeouts_);
-
-#define PLATFORM_FT_ResetDevice(name) u32 (name)(void *handle)
-typedef PLATFORM_FT_ResetDevice(FT_ResetDevice_);
-
-#define PLATFORM_FT_GetQueueStatus(name) u32 (name)(void *handle, u32 *remaining_bytes_in_queue)
-typedef PLATFORM_FT_GetQueueStatus(FT_GetQueueStatus_);
-
 int main(void)
 { 
     //TODO : writefile?
@@ -431,31 +393,31 @@ int main(void)
 
     // load ftdi library
     void *ftdi_library = dlopen("../lib/libftd2xx.1.4.24.dylib", RTLD_LAZY|RTLD_GLOBAL);
+    FTDIApi ftdi_api = {};
     if(ftdi_library)
     {
         // get all the necessary function pointers. some of these will be passed onto the 
         // application level so that the debugger can have the functionality to send jtag signals
         // to the cable
-        FT_ListDevices_ *ft_ListDevices = (FT_ListDevices_ *)dlsym(ftdi_library, "FT_ListDevices");
-        FT_Open_ *ft_Open = (FT_Open_ *)dlsym(ftdi_library, "FT_Open");
-        FT_SetBaudRate_ *ft_SetBaudRate = (FT_SetBaudRate_ *)dlsym(ftdi_library, "FT_SetBaudRate");
-        FT_SetBitMode_ *ft_SetBitMode = (FT_SetBitMode_ *)dlsym(ftdi_library, "FT_SetBitMode");
-        FT_SetLatencyTimer_ *ft_SetLatencyTimer = (FT_SetLatencyTimer_ *)dlsym(ftdi_library, "FT_SetLatencyTimer");
-        FT_SetTimeouts_ *ft_SetTimeouts = (FT_SetTimeouts_ *)dlsym(ftdi_library, "FT_SetTimeouts");
-        FT_ResetDevice_ *ft_ResetDevice = (FT_ResetDevice_ *)dlsym(ftdi_library, "FT_ResetDevice");
+        ftdi_api.ft_ListDevices = (FT_ListDevices_ *)dlsym(ftdi_library, "FT_ListDevices");
+        ftdi_api.ft_Open = (FT_Open_ *)dlsym(ftdi_library, "FT_Open");
+        ftdi_api.ft_SetBaudRate = (FT_SetBaudRate_ *)dlsym(ftdi_library, "FT_SetBaudRate");
+        ftdi_api.ft_SetBitMode = (FT_SetBitMode_ *)dlsym(ftdi_library, "FT_SetBitMode");
+        ftdi_api.ft_SetLatencyTimer = (FT_SetLatencyTimer_ *)dlsym(ftdi_library, "FT_SetLatencyTimer");
+        ftdi_api.ft_SetTimeouts = (FT_SetTimeouts_ *)dlsym(ftdi_library, "FT_SetTimeouts");
+        ftdi_api.ft_ResetDevice = (FT_ResetDevice_ *)dlsym(ftdi_library, "FT_ResetDevice");
 
-        FT_Read_ *ft_Read = (FT_Read_ *)dlsym(ftdi_library, "FT_Read");
-        FT_Write_ *ft_Write = (FT_Write_ *)dlsym(ftdi_library, "FT_Write");
-        FT_GetQueueStatus_ *ft_GetQueueStatus = (FT_GetQueueStatus_ *)dlsym(ftdi_library, "FT_GetQueueStatus");
+        ftdi_api.ft_Read = (FT_Read_ *)dlsym(ftdi_library, "FT_Read");
+        ftdi_api.ft_Write = (FT_Write_ *)dlsym(ftdi_library, "FT_Write");
+        ftdi_api.ft_GetQueueStatus = (FT_GetQueueStatus_ *)dlsym(ftdi_library, "FT_GetQueueStatus");
 
-        void *ft_handle;
         // not a fan of the defensive programming, but can be useful when we're using an unknown library
-        assert(ft_Open(0, &ft_handle) == FT_OK);
-        assert(ft_ResetDevice(ft_handle) == FT_OK);
-        assert(ft_SetBitMode(ft_handle, 0, FT_BITMODE_RESET) == FT_OK);
-        assert(ft_SetLatencyTimer(ft_handle, 2) == FT_OK);
-        assert(ft_SetTimeouts(ft_handle, 3000, 3000) == FT_OK);
-        assert(ft_SetBitMode(ft_handle, 0x0B, FT_BITMODE_MPSSE) == FT_OK);
+        assert(ftdi_api.ft_Open(0, &ftdi_api.ft_handle) == FT_OK);
+        assert(ftdi_api.ft_ResetDevice(ftdi_api.ft_handle) == FT_OK);
+        assert(ftdi_api.ft_SetBitMode(ftdi_api.ft_handle, 0, FT_BITMODE_RESET) == FT_OK);
+        assert(ftdi_api.ft_SetLatencyTimer(ftdi_api.ft_handle, 2) == FT_OK);
+        assert(ftdi_api.ft_SetTimeouts(ftdi_api.ft_handle, 3000, 3000) == FT_OK);
+        assert(ftdi_api.ft_SetBitMode(ftdi_api.ft_handle, 0x0B, FT_BITMODE_MPSSE) == FT_OK);
 
         // setup jtag commands
         
@@ -465,27 +427,66 @@ int main(void)
         // bit 3 = TMS
         u8 jtag_setup_commands[] = 
         { 
-            // TMS should start low 
-            // TDI_TDO command packet?
             0x80, // opcode
-            0x00,  // initial value
+            // initial value
+            0x00,  
             0x0B,  // direction, only the TDO is the input to the cable
             
             // loopback
-            0x84, // opcode
+            // 0x84, // opcode
 
             // tck period = 12Mhz / ((1+divisor) * 2)
+            // currently the clock is running at 0.1mhz
             0x86,  // opcode
-            0x04, // divisor low 8bits
+            0x3b, // divisor low 8bits
             0x00  // divisor high 8bits
         };
 
         // send jtag setup commands to the mpsse
         u32 command_byte_count = sizeof(jtag_setup_commands);
         u32 bytes_written;
-        assert(ft_Write(ft_handle, jtag_setup_commands, command_byte_count, &bytes_written) == FT_OK);
+        assert(ftdi_api.ft_Write(ftdi_api.ft_handle, jtag_setup_commands, command_byte_count, &bytes_written) == FT_OK);
         assert(command_byte_count == bytes_written);
+
+#if 1
+        // once the dap state machine is reset, the IR would be IDCODE.
+        // there is implied 0 or 1(depending on the initial TMS value) between commands 
+        // as the cable sends out additional clock. to avoid this, we're gonna make all our commands
+        // to have one less bit, as long the last bit should be 0
+        u8 command[] = 
+        {
+            COMMAND_TMS_GOTO_RESET,
+            COMMAND_TMS_GOTO_SHIFT_IR_FROM_RESET,
+
+            // shift in 4 bit IDCODE instruction through TDI
+            // the last bit will be taken care of the following TMS command
+            0x1b, 0x02, 0b110,
+
+            COMMAND_TMS_GOTO_SHIFT_DR_FROM_SHIFT_IR(1),
+
+            // COMMAND_TMS_SHIFT_OUT_32_WITH_READ,
+        };
+        ftdi_write(&ftdi_api, command, array_count(command));
+
+#if 0
+        u32 queue_check = 0;
+        u32 bytes_received = 0;
+        while(bytes_received < 4)
+        {
+            if((queue_check & 511) == 0)
+            {
+                // TODO(gh) check for timeout
+            }
+
+            assert(ftdi_api.ft_GetQueueStatus(ftdi_api.ft_handle, &bytes_received) == FT_OK);
+
+            queue_check++;
+        }
+        ftdi_receive_queue_should_be_empty(&ftdi_api);
+#endif
+#endif
         
+#if 0 // testing loopback functionality. make sure to send 0x84 to the mpsse which is an opcode for setting up the cable to loopback mode
         // send some bytes to check the loopback functionality
         u8 loopback_command[] = 
         {
@@ -520,11 +521,11 @@ int main(void)
 
         // first, send the TDI output command
         u32 loopback_byte_count = sizeof(loopback_command);
-        assert(ft_Write(ft_handle, loopback_command, loopback_byte_count, &bytes_written) == FT_OK);
+        assert(ftdi_api.ft_Write(ftdi_api.ft_handle, loopback_command, loopback_byte_count, &bytes_written) == FT_OK);
         assert(loopback_byte_count == bytes_written);
 
         // second, send the bytes that we wanna output
-        assert(ft_Write(ft_handle, loopback_bytes, data_byte_count, &bytes_written) == FT_OK);
+        assert(ftdi_api.ft_Write(ftdi_api.ft_handle, loopback_bytes, data_byte_count, &bytes_written) == FT_OK);
         assert(data_byte_count == bytes_written);
 
         u32 bytes_received = 0;
@@ -536,7 +537,7 @@ int main(void)
                 // TODO(gh) check for timeout
             }
 
-            assert(ft_GetQueueStatus(ft_handle, &bytes_received) == FT_OK);
+            assert(ftdi_api.ft_GetQueueStatus(ftdi_api.ft_handle, &bytes_received) == FT_OK);
 
             queue_check++;
         }
@@ -544,7 +545,7 @@ int main(void)
         // using malloc is a bad idea, but for now it's fine because this is a test code
         u8 *receive_buffer = (u8 *)malloc(bytes_received * sizeof(u8));
         u32 bytes_read;
-        assert(ft_Read(ft_handle, receive_buffer, bytes_received, &bytes_read) == FT_OK);
+        assert(ftdi_api.ft_Read(ftdi_api.ft_handle, receive_buffer, bytes_received, &bytes_read) == FT_OK);
         assert(bytes_received == bytes_read);
 
         // check whether we received the bytes that we sent 
@@ -552,10 +553,10 @@ int main(void)
 
         // check whether the queue has any unexpected byte
         u32 remaining_bytes;
-        assert(ft_GetQueueStatus(ft_handle, &remaining_bytes) == FT_OK);
+        assert(ftdi_api.ft_GetQueueStatus(ftdi_api.ft_handle, &remaining_bytes) == FT_OK);
         assert(remaining_bytes == 0);
+#endif
     }
-
 
     // TODO(gh) get monitor width and height and use that 
 #if 1
@@ -599,7 +600,7 @@ int main(void)
     NSWindow *window = [[NSWindow alloc] initWithContentRect : window_rect
                                         // Apple window styles : https://developer.apple.com/documentation/appkit/nswindow/stylemask
                                         styleMask : NSTitledWindowMask|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable
-                                        backing : NSBackingStoreBuffered
+                                       backing : NSBackingStoreBuffered
                                         defer : NO];
 
     NSString *app_name = [[NSProcessInfo processInfo] processName];
@@ -612,8 +613,9 @@ int main(void)
     [app run];
 
     is_running = true;
-    while(is_running)
+    // while(is_running)
     {
+        // main loop
     }
 
     return 0;

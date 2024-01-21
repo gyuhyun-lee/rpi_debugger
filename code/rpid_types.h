@@ -49,7 +49,7 @@ typedef double f64;
 #define i8_min INT8_MIN
 #define i8_max INT8_MAX
 
-#define assert(expression) if(!(expression)) {int *adfasdfasdfasdf = 0; *adfasdfasdfasdf = 0;}
+#define assert(expression) if(!(expression)) {int *a = 0; *a = 0;}
 #define array_count(array) (sizeof(array) / sizeof(array[0]))
 #define array_size(array) (sizeof(array))
 #define invalid_code_path assert(0)
@@ -57,6 +57,7 @@ typedef double f64;
 #define global static
 #define global_variable static
 #define local_persist static
+// https://hero.handmade.network/forums/code-discussion/t/1117-internal_functions
 #define internal static
 
 #define kilobytes(value) value*1024LL
