@@ -8,19 +8,20 @@
 
 // bit 7 controls what the TDI should be during moving the TMS,
 // we should use it to determine the last bit of TDI
-#define COMMAND_TMS_GOTO_RESET 0x4a, 4, 0b11111 
-#define COMMAND_TMS_GOTO_SHIFT_IR_FROM_RESET 0x4a, 4, 0b00110
-#define COMMAND_TMS_GOTO_SHIFT_DR_FROM_RESET 0x4a, 3, 0b0010
-#define COMMAND_TMS_GOTO_SHIFT_DR_FROM_SHIFT_IR(TDI) 0x4a, 4, ((TDI << 7) | 0b00111) // update-ir is implied
-#define COMMAND_TMS_GOTO_SHIFT_IR_FROM_SHIFT_DR 0x4a, 5, 0b001111 // update-dr is implied
- 
-#define COMMAND_TMS_SHIFT_OUT_4 0x4a, 7, 
-#define COMMAND_TMS_SHIFT_OUT_32_WITH_READ 0x6e, 7, 0x7f, \
-                                           0x6e, 7, 0x7f, \
-                                           0x6e, 7, 0x7f, \
-                                           0x6e, 7, 0x7f
+#define command_tms_goto_reset 0x4a, 4, 0b11111 
+#define command_tms_goto_shift_ir_from_reset 0x4a, 4, 0b00110
 
-#define COMMAND_TMS_WITH_READ(length, byte) , length, byte
+#define command_tms_goto_shift_dr_from_reset 0x4a, 3, 0b0010
+#define command_tms_goto_shift_dr_from_shift_ir(TDI) 0x4a, 4, ((TDI << 7) | 0b00111) // update-ir is implied
+#define command_tms_goto_shift_ir_from_shift_dr 0x4a, 5, 0b001111 // update-dr is implied
+ 
+// TODO(gh) since they are not specifying the number of bits that can be sent 
+// with a single command, can we just use the number that is bigger than 8
+// and let the chip to output the initial value that we specified?
+#define command_tms_shift_out_32bits_with_read 0x6e, 7, 0x0, \
+                                               0x6e, 7, 0x0, \
+                                               0x6e, 7, 0x0, \
+                                               0x6e, 6, 0x0
 
 // FTDI functions that the debugger doesn't need to use.
 // the function types are defined as the original function name + _
@@ -65,7 +66,7 @@ typedef PLATFORM_FT_GetQueueStatus(FT_GetQueueStatus_);
 // has all the function pointers that we need from the FTDI library 
 struct FTDIApi
 {
-    void *ft_handle; // handle to the ftdi cable
+    void *handle; 
 
     // ftdi setup functions
     FT_ListDevices_ *ft_ListDevices;

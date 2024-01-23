@@ -412,12 +412,12 @@ int main(void)
         ftdi_api.ft_GetQueueStatus = (FT_GetQueueStatus_ *)dlsym(ftdi_library, "FT_GetQueueStatus");
 
         // not a fan of the defensive programming, but can be useful when we're using an unknown library
-        assert(ftdi_api.ft_Open(0, &ftdi_api.ft_handle) == FT_OK);
-        assert(ftdi_api.ft_ResetDevice(ftdi_api.ft_handle) == FT_OK);
-        assert(ftdi_api.ft_SetBitMode(ftdi_api.ft_handle, 0, FT_BITMODE_RESET) == FT_OK);
-        assert(ftdi_api.ft_SetLatencyTimer(ftdi_api.ft_handle, 2) == FT_OK);
-        assert(ftdi_api.ft_SetTimeouts(ftdi_api.ft_handle, 3000, 3000) == FT_OK);
-        assert(ftdi_api.ft_SetBitMode(ftdi_api.ft_handle, 0x0B, FT_BITMODE_MPSSE) == FT_OK);
+        assert(ftdi_api.ft_Open(0, &ftdi_api.handle) == FT_OK);
+        assert(ftdi_api.ft_ResetDevice(ftdi_api.handle) == FT_OK);
+        assert(ftdi_api.ft_SetBitMode(ftdi_api.handle, 0, FT_BITMODE_RESET) == FT_OK);
+        assert(ftdi_api.ft_SetLatencyTimer(ftdi_api.handle, 2) == FT_OK);
+        assert(ftdi_api.ft_SetTimeouts(ftdi_api.handle, 3000, 3000) == FT_OK);
+        assert(ftdi_api.ft_SetBitMode(ftdi_api.handle, 0x0B, FT_BITMODE_MPSSE) == FT_OK);
 
         // setup jtag commands
         
@@ -428,8 +428,7 @@ int main(void)
         u8 jtag_setup_commands[] = 
         { 
             0x80, // opcode
-            // initial value
-            0x00,  
+            0x00,  // initial value
             0x0B,  // direction, only the TDO is the input to the cable
             
             // loopback
@@ -445,7 +444,7 @@ int main(void)
         // send jtag setup commands to the mpsse
         u32 command_byte_count = sizeof(jtag_setup_commands);
         u32 bytes_written;
-        assert(ftdi_api.ft_Write(ftdi_api.ft_handle, jtag_setup_commands, command_byte_count, &bytes_written) == FT_OK);
+        assert(ftdi_api.ft_Write(ftdi_api.handle, jtag_setup_commands, command_byte_count, &bytes_written) == FT_OK);
         assert(command_byte_count == bytes_written);
 
 #if 1
@@ -455,34 +454,49 @@ int main(void)
         // to have one less bit, as long the last bit should be 0
         u8 command[] = 
         {
-            COMMAND_TMS_GOTO_RESET,
-            COMMAND_TMS_GOTO_SHIFT_IR_FROM_RESET,
+            command_tms_goto_reset,
+#if 0
+            command_tms_goto_shift_ir_from_reset, 
 
             // shift in 4 bit IDCODE instruction through TDI
             // the last bit will be taken care of the following TMS command
-            0x1b, 0x02, 0b110,
+            // 0x1b, 0x02, 0b110, // TODO(gh) why should this be 0x1b, not 0x1a?
+            0x3b, 0x02, 0b110,  // with read
 
-            COMMAND_TMS_GOTO_SHIFT_DR_FROM_SHIFT_IR(1),
+            command_tms_goto_shift_dr_from_shift_ir(1), 
+#else
+            command_tms_goto_shift_dr_from_reset,
+#endif
 
-            // COMMAND_TMS_SHIFT_OUT_32_WITH_READ,
+            // TODO(gh) these commands should be verified
+            command_tms_shift_out_32bits_with_read,
+            command_tms_goto_reset,
         };
         ftdi_write(&ftdi_api, command, array_count(command));
 
 #if 0
-        u32 queue_check = 0;
-        u32 bytes_received = 0;
-        while(bytes_received < 4)
-        {
-            if((queue_check & 511) == 0)
-            {
-                // TODO(gh) check for timeout
-            }
+        ftdi_wait_receive_queue(&ftdi_api, 4);
 
-            assert(ftdi_api.ft_GetQueueStatus(ftdi_api.ft_handle, &bytes_received) == FT_OK);
-
-            queue_check++;
-        }
+        u8 idcode_buffer[4];
+        ftdi_read(&ftdi_api, idcode_buffer, 4);
         ftdi_receive_queue_should_be_empty(&ftdi_api);
+
+        /*
+            IDCODE structure
+            IDCODE should be 0x4ba00477 for raspberry pi 3 b+.
+
+            bit 0 should always be 1
+            bits [11:1] are the designer ID, which should be 0x43b(page B3-104 of ADIv5.0-5.2 document). In total, bits[11:0] should be 0x477
+            bits [27:12] are the part number, which should be 0xBA00, which stands for a JTAG-DP designed by ARM(page 3-4 CoreSight Technology System Design Guide)
+            bits [31:28] are the version number, and is IMPLEMENTATION DEFINED.
+         */
+
+#if 0
+        assert((idcode_buffer[0] == 0x77) && 
+                (idcode_buffer[1] == 0x04) &&
+                (idcode_buffer[2] == 0x0a) &&
+                (idcode_buffer[3] == 0x4b));
+#endif
 #endif
 #endif
         
@@ -521,11 +535,11 @@ int main(void)
 
         // first, send the TDI output command
         u32 loopback_byte_count = sizeof(loopback_command);
-        assert(ftdi_api.ft_Write(ftdi_api.ft_handle, loopback_command, loopback_byte_count, &bytes_written) == FT_OK);
+        assert(ftdi_api.ft_Write(ftdi_api.handle, loopback_command, loopback_byte_count, &bytes_written) == FT_OK);
         assert(loopback_byte_count == bytes_written);
 
         // second, send the bytes that we wanna output
-        assert(ftdi_api.ft_Write(ftdi_api.ft_handle, loopback_bytes, data_byte_count, &bytes_written) == FT_OK);
+        assert(ftdi_api.ft_Write(ftdi_api.handle, loopback_bytes, data_byte_count, &bytes_written) == FT_OK);
         assert(data_byte_count == bytes_written);
 
         u32 bytes_received = 0;
@@ -537,7 +551,7 @@ int main(void)
                 // TODO(gh) check for timeout
             }
 
-            assert(ftdi_api.ft_GetQueueStatus(ftdi_api.ft_handle, &bytes_received) == FT_OK);
+            assert(ftdi_api.ft_GetQueueStatus(ftdi_api.handle, &bytes_received) == FT_OK);
 
             queue_check++;
         }
@@ -545,7 +559,7 @@ int main(void)
         // using malloc is a bad idea, but for now it's fine because this is a test code
         u8 *receive_buffer = (u8 *)malloc(bytes_received * sizeof(u8));
         u32 bytes_read;
-        assert(ftdi_api.ft_Read(ftdi_api.ft_handle, receive_buffer, bytes_received, &bytes_read) == FT_OK);
+        assert(ftdi_api.ft_Read(ftdi_api.handle, receive_buffer, bytes_received, &bytes_read) == FT_OK);
         assert(bytes_received == bytes_read);
 
         // check whether we received the bytes that we sent 
@@ -553,7 +567,7 @@ int main(void)
 
         // check whether the queue has any unexpected byte
         u32 remaining_bytes;
-        assert(ftdi_api.ft_GetQueueStatus(ftdi_api.ft_handle, &remaining_bytes) == FT_OK);
+        assert(ftdi_api.ft_GetQueueStatus(ftdi_api.handle, &remaining_bytes) == FT_OK);
         assert(remaining_bytes == 0);
 #endif
     }
