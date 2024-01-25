@@ -116,14 +116,14 @@ app_delegate : NSObject<NSApplicationDelegate>
     NSAutoreleasePool* pool = [NSAutoreleasePool new];
     NSEvent* event =
         [NSEvent otherEventWithType: NSApplicationDefined
-                 location: NSMakePoint(0, 0)
-                 modifierFlags: 0
-                 timestamp: 0
-                 windowNumber: 0
-                 context: nil
-                 subtype: 0
-                 data1: 0
-                 data2: 0];
+        location: NSMakePoint(0, 0)
+            modifierFlags: 0
+            timestamp: 0
+            windowNumber: 0
+            context: nil
+            subtype: 0
+            data1: 0
+            data2: 0];
     [NSApp postEvent: event atStart: YES];
     [pool drain];
 }
@@ -193,9 +193,9 @@ macos_handle_event(NSApplication *app, NSWindow *window, PlatformInput *platform
     while(1)
     {
         NSEvent *event = [app nextEventMatchingMask:NSAnyEventMask
-                         untilDate:nil
-                            inMode:NSDefaultRunLoopMode
-                           dequeue:YES];
+            untilDate:nil
+            inMode:NSDefaultRunLoopMode
+            dequeue:YES];
         if(event)
         {
             switch([event type])
@@ -286,10 +286,10 @@ macos_handle_event(NSApplication *app, NSWindow *window, PlatformInput *platform
                     }
                 }break;
 
-                default:
-                {
-                    [app sendEvent : event];
-                }
+            default:
+            {
+                [app sendEvent : event];
+            }
             }
         }
         else
@@ -306,8 +306,8 @@ macos_get_base_path(char *dest)
     NSString *app_path_string = [[NSBundle mainBundle] bundlePath];
     u32 length = [app_path_string lengthOfBytesUsingEncoding: NSUTF8StringEncoding];
     unsafe_string_append(dest, 
-                        [app_path_string cStringUsingEncoding: NSUTF8StringEncoding],
-                        length);
+            [app_path_string cStringUsingEncoding: NSUTF8StringEncoding],
+            length);
 
     u32 slash_to_delete_count = 2;
     for(u32 index = length-1;
@@ -382,13 +382,14 @@ int main(void)
 
     PlatformMemory platform_memory = {};
 
-    platform_memory.permanent_memory_size = gigabytes(1);
-    platform_memory.transient_memory_size = gigabytes(3);
+    // we definitely don't need this memory(and this much memory) 
+    platform_memory.permanent_memory_size = megabytes(16);
+    platform_memory.transient_memory_size = megabytes(32);
     u64 total_size = platform_memory.permanent_memory_size + platform_memory.transient_memory_size;
     vm_allocate(mach_task_self(), 
-                (vm_address_t *)&platform_memory.permanent_memory,
-                total_size, 
-                VM_FLAGS_ANYWHERE);
+            (vm_address_t *)&platform_memory.permanent_memory,
+            total_size, 
+            VM_FLAGS_ANYWHERE);
     platform_memory.transient_memory = (u8 *)platform_memory.permanent_memory + platform_memory.permanent_memory_size;
 
     // load ftdi library
@@ -397,7 +398,7 @@ int main(void)
     if(ftdi_library)
     {
         // get all the necessary function pointers. some of these will be passed onto the 
-        // application level so that the debugger can have the functionality to send jtag signals
+        // application level so that the debugger can send the necessary jtag signals
         // to the cable
         ftdi_api.ft_ListDevices = (FT_ListDevices_ *)dlsym(ftdi_library, "FT_ListDevices");
         ftdi_api.ft_Open = (FT_Open_ *)dlsym(ftdi_library, "FT_Open");
@@ -406,21 +407,32 @@ int main(void)
         ftdi_api.ft_SetLatencyTimer = (FT_SetLatencyTimer_ *)dlsym(ftdi_library, "FT_SetLatencyTimer");
         ftdi_api.ft_SetTimeouts = (FT_SetTimeouts_ *)dlsym(ftdi_library, "FT_SetTimeouts");
         ftdi_api.ft_ResetDevice = (FT_ResetDevice_ *)dlsym(ftdi_library, "FT_ResetDevice");
+        ftdi_api.ft_SetUSBParameters = (FT_SetUSBParameters_ *)dlsym(ftdi_library, "FT_SetUSBParameters");
+        ftdi_api.ft_SetChars = (FT_SetChars_ *)dlsym(ftdi_library, "FT_SetChars");
+        ftdi_api.ft_SetFlowControl = (FT_SetFlowControl_ *)dlsym(ftdi_library, "FT_SetFlowControl");
 
         ftdi_api.ft_Read = (FT_Read_ *)dlsym(ftdi_library, "FT_Read");
         ftdi_api.ft_Write = (FT_Write_ *)dlsym(ftdi_library, "FT_Write");
         ftdi_api.ft_GetQueueStatus = (FT_GetQueueStatus_ *)dlsym(ftdi_library, "FT_GetQueueStatus");
 
-        // not a fan of the defensive programming, but can be useful when we're using an unknown library
+        // the sequence here is from AN_135 FTDI MPSSE Basics doc
         assert(ftdi_api.ft_Open(0, &ftdi_api.handle) == FT_OK);
         assert(ftdi_api.ft_ResetDevice(ftdi_api.handle) == FT_OK);
-        assert(ftdi_api.ft_SetBitMode(ftdi_api.handle, 0, FT_BITMODE_RESET) == FT_OK);
+
+        assert(ftdi_api.ft_SetUSBParameters(ftdi_api.handle, 64*1024, 64*1024) == FT_OK);
+        assert(ftdi_api.ft_SetChars(ftdi_api.handle, false, 0, false, 0) == FT_OK); // disable event & error characters
+        assert(ftdi_api.ft_SetTimeouts(ftdi_api.handle, 3000, 3000) == FT_OK); // in milliseconds
         assert(ftdi_api.ft_SetLatencyTimer(ftdi_api.handle, 2) == FT_OK);
-        assert(ftdi_api.ft_SetTimeouts(ftdi_api.handle, 3000, 3000) == FT_OK);
+        assert(ftdi_api.ft_SetFlowControl(ftdi_api.handle, FT_FLOW_RTS_CTS, 0, 0) == FT_OK); // TODO(gh) not exactly sure what this is 
+
+        assert(ftdi_api.ft_SetBitMode(ftdi_api.handle, 0, FT_BITMODE_RESET) == FT_OK);
         assert(ftdi_api.ft_SetBitMode(ftdi_api.handle, 0x0B, FT_BITMODE_MPSSE) == FT_OK);
 
+        ftdi_flush_receive_fifo(&ftdi_api);
+        // ftdi_receive_queue_should_be_empty(&ftdi_api);
+
         // setup jtag commands
-        
+
         // bit 0 = TCK
         // bit 1 = TDI
         // bit 2 = TDO
@@ -430,7 +442,7 @@ int main(void)
             0x80, // opcode
             0x00,  // initial value
             0x0B,  // direction, only the TDO is the input to the cable
-            
+
             // loopback
             // 0x84, // opcode
 
@@ -446,134 +458,41 @@ int main(void)
         u32 bytes_written;
         assert(ftdi_api.ft_Write(ftdi_api.handle, jtag_setup_commands, command_byte_count, &bytes_written) == FT_OK);
         assert(command_byte_count == bytes_written);
+        
+        ftdi_receive_queue_should_be_empty(&ftdi_api);
 
-#if 1
-        // once the dap state machine is reset, the IR would be IDCODE.
-        // there is implied 0 or 1(depending on the initial TMS value) between commands 
-        // as the cable sends out additional clock. to avoid this, we're gonna make all our commands
-        // to have one less bit, as long the last bit should be 0
         u8 command[] = 
         {
             command_tms_goto_reset,
-#if 0
-            command_tms_goto_shift_ir_from_reset, 
-
-            // shift in 4 bit IDCODE instruction through TDI
-            // the last bit will be taken care of the following TMS command
-            // 0x1b, 0x02, 0b110, // TODO(gh) why should this be 0x1b, not 0x1a?
-            0x3b, 0x02, 0b110,  // with read
-
-            command_tms_goto_shift_dr_from_shift_ir(1), 
-#else
             command_tms_goto_shift_dr_from_reset,
-#endif
-
-            // TODO(gh) these commands should be verified
-            command_tms_shift_out_32bits_with_read,
+            command_tms_read_shift_out_32bits_and_exit,
             command_tms_goto_reset,
         };
         ftdi_write(&ftdi_api, command, array_count(command));
 
-#if 0
         ftdi_wait_receive_queue(&ftdi_api, 4);
 
-        u8 idcode_buffer[4];
+        u8 idcode_buffer[4] = {};
         ftdi_read(&ftdi_api, idcode_buffer, 4);
         ftdi_receive_queue_should_be_empty(&ftdi_api);
 
         /*
-            IDCODE structure
-            IDCODE should be 0x4ba00477 for raspberry pi 3 b+.
+           IDCODE structure
+           IDCODE should be 0x4ba00477 for raspberry pi 3 b+.
 
-            bit 0 should always be 1
-            bits [11:1] are the designer ID, which should be 0x43b(page B3-104 of ADIv5.0-5.2 document). In total, bits[11:0] should be 0x477
-            bits [27:12] are the part number, which should be 0xBA00, which stands for a JTAG-DP designed by ARM(page 3-4 CoreSight Technology System Design Guide)
-            bits [31:28] are the version number, and is IMPLEMENTATION DEFINED.
+           bit 0 should always be 1
+           bits [11:1] are the designer ID, which should be 0x43b(page B3-104 of ADIv5.0-5.2 document). In total, bits[11:0] should be 0x477
+           bits [27:12] are the part number, which should be 0xBA00, which stands for a JTAG-DP designed by ARM(page 3-4 CoreSight Technology System Design Guide)
+           bits [31:28] are the version number which is IMPLEMENTATION DEFINED.
          */
-
-#if 0
         assert((idcode_buffer[0] == 0x77) && 
                 (idcode_buffer[1] == 0x04) &&
-                (idcode_buffer[2] == 0x0a) &&
+                (idcode_buffer[2] == 0xa0) &&
                 (idcode_buffer[3] == 0x4b));
-#endif
-#endif
-#endif
-        
-#if 0 // testing loopback functionality. make sure to send 0x84 to the mpsse which is an opcode for setting up the cable to loopback mode
-        // send some bytes to check the loopback functionality
-        u8 loopback_command[] = 
-        {
-            0x31, // opcode
-            0x00, // byte count low
-            0x00,  // byte count high
-        };
 
-        u8 loopback_bytes[] = 
-        {
-            0x00,
-            0x01,
-            0x02,
-            0x03,
-            0x04,
-            0x05,
-            0x06,
-            0x07,
-            0x08,
-            0x09,
-            0x0a,
-            0x0b,
-            0x0c,
-            0x0d,
-            0x0e,
-            0x0f,
-        };
-
-        u32 data_byte_count = sizeof(loopback_bytes);
-        loopback_command[1] = data_byte_count & 0xff;
-        loopback_command[2] = (data_byte_count >> 8) & 0xff;
-
-        // first, send the TDI output command
-        u32 loopback_byte_count = sizeof(loopback_command);
-        assert(ftdi_api.ft_Write(ftdi_api.handle, loopback_command, loopback_byte_count, &bytes_written) == FT_OK);
-        assert(loopback_byte_count == bytes_written);
-
-        // second, send the bytes that we wanna output
-        assert(ftdi_api.ft_Write(ftdi_api.handle, loopback_bytes, data_byte_count, &bytes_written) == FT_OK);
-        assert(data_byte_count == bytes_written);
-
-        u32 bytes_received = 0;
-        u32 queue_check = 0;
-        while(bytes_received != bytes_written)
-        {
-            if((queue_check & 511) == 0)
-            {
-                // TODO(gh) check for timeout
-            }
-
-            assert(ftdi_api.ft_GetQueueStatus(ftdi_api.handle, &bytes_received) == FT_OK);
-
-            queue_check++;
-        }
-
-        // using malloc is a bad idea, but for now it's fine because this is a test code
-        u8 *receive_buffer = (u8 *)malloc(bytes_received * sizeof(u8));
-        u32 bytes_read;
-        assert(ftdi_api.ft_Read(ftdi_api.handle, receive_buffer, bytes_received, &bytes_read) == FT_OK);
-        assert(bytes_received == bytes_read);
-
-        // check whether we received the bytes that we sent 
-        assert(memcmp(loopback_bytes, receive_buffer, bytes_read) == 0);
-
-        // check whether the queue has any unexpected byte
-        u32 remaining_bytes;
-        assert(ftdi_api.ft_GetQueueStatus(ftdi_api.handle, &remaining_bytes) == FT_OK);
-        assert(remaining_bytes == 0);
-#endif
     }
 
-    // TODO(gh) get monitor width and height and use that 
-#if 1
+#if 0
     // 2.5k -ish
     i32 window_width = 3200;
     i32 window_height = 1800;
@@ -583,7 +502,13 @@ int main(void)
     i32 window_height = 1080;
 #endif
 
-    // TODO(gh) find out how to have variable refresh rate from the OS side
+#if 1
+    // metal
+    // TODO(gh): the value here is based on the pixel density, so we need to figure out a way to get the dpi of the monitor
+    //NSRect window_rect = NSMakeRect(100.0f, 100.0f, (f32)window_width, (f32)window_height);
+    NSRect window_rect = NSMakeRect(100.0f, 100.0f, (f32)window_width/2.0f, (f32)window_height/2.0f);
+
+
     u32 target_frames_per_second = 60;
     f32 target_seconds_per_frame = 1.0f/(f32)target_frames_per_second;
     u32 target_nano_seconds_per_frame = (u32)(target_seconds_per_frame*sec_to_nanosec);
@@ -605,32 +530,78 @@ int main(void)
     [SubMenuOfMenuItemWithAppName addItem:quitMenuItem];
     [menu_item_with_item_name setSubmenu:SubMenuOfMenuItemWithAppName];
 
-    // TODO(gh): when connected to the external display, this should be window_width and window_height
-    // but if not, this should be window_width/2 and window_height/2. Turns out it's based on the resolution(or maybe ppi),
-    // because when connected to the apple studio display, the application should use the same value as the macbook monitor
-    //NSRect window_rect = NSMakeRect(100.0f, 100.0f, (f32)window_width, (f32)window_height);
-    NSRect window_rect = NSMakeRect(100.0f, 100.0f, (f32)window_width/2.0f, (f32)window_height/2.0f);
-
     NSWindow *window = [[NSWindow alloc] initWithContentRect : window_rect
                                         // Apple window styles : https://developer.apple.com/documentation/appkit/nswindow/stylemask
                                         styleMask : NSTitledWindowMask|NSWindowStyleMaskClosable|NSWindowStyleMaskResizable
                                        backing : NSBackingStoreBuffered
                                         defer : NO];
-
     NSString *app_name = [[NSProcessInfo processInfo] processName];
     [window setTitle:app_name];
     [window makeKeyAndOrderFront:0];
     [window makeKeyWindow];
     [window makeMainWindow];
 
-    [app activateIgnoringOtherApps:YES];
+    id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+    NSString *name = device.name;
+    bool has_unified_memory = device.hasUnifiedMemory;
+    u64 max_allocation_size = device.recommendedMaxWorkingSetSize;
+    MTKView *view = [[MTKView alloc] initWithFrame : window_rect
+                                        device:device];
+    [window setContentView:view];
+    view.depthStencilPixelFormat = MTLPixelFormatDepth32Float;
+
+    CAMetalLayer *metal_layer = (CAMetalLayer*)[view layer];
+    id<MTLCommandQueue> command_queue = [device newCommandQueue];
+
+    [app activate];
     [app run];
+#endif
 
     is_running = true;
-    // while(is_running)
+#if 1
+    u64 last_time = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+    while(is_running)
     {
         // main loop
+        MTLRenderPassDescriptor* renderpass = view.currentRenderPassDescriptor;
+        if(renderpass)
+        {
+        }
+
+        u64 time_passed_in_nsec = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - last_time;
+        u32 time_passed_in_msec = (u32)(time_passed_in_nsec / sec_to_millisec);
+        f32 time_passed_in_sec = (f32)time_passed_in_nsec / sec_to_nanosec;
+        if(time_passed_in_nsec < target_nano_seconds_per_frame)
+        {
+            // NOTE(gh): Because nanosleep is such a high resolution sleep method, for precise timing,
+            // we need to undersleep and spend time in a loop
+            u64 undersleep_nano_seconds = target_nano_seconds_per_frame / 5;
+            if(time_passed_in_nsec + undersleep_nano_seconds < target_nano_seconds_per_frame)
+            {
+                timespec time_spec = {};
+                time_spec.tv_nsec = target_nano_seconds_per_frame - time_passed_in_nsec -  undersleep_nano_seconds;
+
+                nanosleep(&time_spec, 0);
+            }
+
+            // For a short period of time, loop
+            time_passed_in_nsec = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - last_time;
+            while(time_passed_in_nsec < target_nano_seconds_per_frame)
+            {
+                time_passed_in_nsec = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - last_time;
+            }
+            time_passed_in_msec = (u32)(time_passed_in_nsec / sec_to_millisec);
+            time_passed_in_sec = (f32)time_passed_in_nsec / sec_to_nanosec;
+        }
+        else
+        {
+            // TODO : Missed Frame!
+            // TODO(gh) : Whenever we miss the frame re-sync with the display link
+            // printf("Missed frame, exceeded by %dms(%.6fs)!\n", time_passed_in_msec, time_passed_in_sec);
+        }
+        last_time = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
     }
+#endif
 
     return 0;
 }

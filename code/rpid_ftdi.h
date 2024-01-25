@@ -4,7 +4,9 @@
 #include "ftd2xx.h"
 
 // commands for the mpsse processor of the ftdi chip
-#define COMMAND_TMS_WITHOUT_READ(length, byte) 0x4a, length, byte
+// command_tms_xx == without read
+// command_tms_read_xx == with read
+#define command_tms(length, byte) 0x4a, length, byte
 
 // bit 7 controls what the TDI should be during moving the TMS,
 // we should use it to determine the last bit of TDI
@@ -15,13 +17,17 @@
 #define command_tms_goto_shift_dr_from_shift_ir(TDI) 0x4a, 4, ((TDI << 7) | 0b00111) // update-ir is implied
 #define command_tms_goto_shift_ir_from_shift_dr 0x4a, 5, 0b001111 // update-dr is implied
  
-// TODO(gh) since they are not specifying the number of bits that can be sent 
-// with a single command, can we just use the number that is bigger than 8
-// and let the chip to output the initial value that we specified?
-#define command_tms_shift_out_32bits_with_read 0x6e, 7, 0x0, \
-                                               0x6e, 7, 0x0, \
-                                               0x6e, 7, 0x0, \
-                                               0x6e, 6, 0x0
+// 31 cycles in update + 1 cycle in exit == 32 cycles
+#define command_tms_read_shift_out_32bits_and_exit 0x6e, 7, 0x0, \
+                                                   0x6e, 7, 0x0, \
+                                                   0x6e, 7, 0x0, \
+                                                   0x6e, 7, 0x0, \
+                                                   0x4a, 0, 0x1
+                                                   // TODO(gh) this clocks out 33 bits of TDO, why?
+                                                   // 0x6e, 6, 0x0, \
+                                                   // 0x6e, 0, 0x1
+
+                                                    
 
 // FTDI functions that the debugger doesn't need to use.
 // the function types are defined as the original function name + _
@@ -63,12 +69,28 @@ typedef PLATFORM_FT_ResetDevice(FT_ResetDevice_);
 #define PLATFORM_FT_GetQueueStatus(name) u32 (name)(void *handle, u32 *remaining_bytes_in_queue)
 typedef PLATFORM_FT_GetQueueStatus(FT_GetQueueStatus_);
 
+// sets the maximum USB transmit size
+#define PLATFORM_FT_SetUSBParameters(name) u32 (name)(void *handle, u32 in_byte_count, u32 out_byte_count)
+typedef PLATFORM_FT_SetUSBParameters(FT_SetUSBParameters_);
+
+#define PLATFORM_FT_SetChars(name) u32 (name)(void *handle, u8 uEventCh, u8 uEventChEn, u8 uErrorCh, u8 uErrorChEn)
+typedef PLATFORM_FT_SetChars(FT_SetChars_);
+
+#define PLATFORM_FT_SetFlowControl(name) u32 (name)(void *handle, u16 usFlowControl, u8 uXon, u8 uXoff)
+typedef PLATFORM_FT_SetFlowControl(FT_SetFlowControl_);
+
+#if 0
+#define PLATFORM_FT_(name) u32 (name)()
+typedef PLATFORM_FT_(FT_);
+#endif
+
 // has all the function pointers that we need from the FTDI library 
 struct FTDIApi
 {
     void *handle; 
 
-    // ftdi setup functions
+    // TODO(gh) don't think these should be part of the runtime API,
+    // but maybe they should be so that the user can change these parameters from the debugger?
     FT_ListDevices_ *ft_ListDevices;
     FT_Open_ *ft_Open;
     FT_SetBaudRate_ *ft_SetBaudRate;
@@ -76,6 +98,9 @@ struct FTDIApi
     FT_SetLatencyTimer_ *ft_SetLatencyTimer;
     FT_SetTimeouts_ *ft_SetTimeouts;
     FT_ResetDevice_ *ft_ResetDevice;
+    FT_SetUSBParameters_ *ft_SetUSBParameters;
+    FT_SetChars_ *ft_SetChars;
+    FT_SetFlowControl_ *ft_SetFlowControl;
 
     // ftdi runtime functions
     FT_Read_ *ft_Read;
