@@ -65,3 +65,126 @@ ftdi_receive_queue_should_be_empty(FTDIApi *ftdi_api)
     assert(ftdi_api->ft_GetQueueStatus(ftdi_api->handle, &remaining_bytes) == FT_OK);
     assert(remaining_bytes == 0);
 }
+
+/*
+   IDCODE should be 0x4ba00477 for raspberry pi 3 b+.
+
+   bit 0 should always be 1
+   bits [11:1] are the designer ID, which should be 0x43b(page B3-104 of ADIv5.0-5.2 document). In total, bits[11:0] should be 0x477
+   bits [27:12] are the part number, which should be 0xBA00, which stands for a JTAG-DP designed by ARM(page 3-4 CoreSight Technology System Design Guide)
+   bits [31:28] are the version number which is IMPLEMENTATION DEFINED.
+ */
+internal void
+ftdi_test_IDCODE(FTDIApi *ftdi_api)
+{
+    u8 commands[] = 
+    {
+        goto_reset,
+        goto_shift_ir_from_reset,
+        shift_in_4bits_and_exit(ir_IDCODE),
+
+        goto_shift_dr_from_exit_ir,
+        shift_out_32bits_and_exit,
+        goto_reset,
+    };
+    ftdi_write(ftdi_api, commands, array_count(commands));
+
+    ftdi_wait_receive_queue(ftdi_api, 4);
+
+    u8 receive_buffer[4] = {};
+    ftdi_read(ftdi_api, receive_buffer, 4);
+    ftdi_receive_queue_should_be_empty(ftdi_api);
+
+    assert((receive_buffer[0] == 0x77) && 
+            (receive_buffer[1] == 0x04) &&
+            (receive_buffer[2] == 0xa0) &&
+            (receive_buffer[3] == 0x4b));
+}
+
+/*
+   DPIDR(debug port identification register) - only present in DPv1 & DPv2
+
+   32 bit in total
+   bit 0 - RAO
+   bits[11:1] should be same as IDCODE
+   bits[15:12] 
+   1 - DPv1
+   2 - DPv2
+   all the other values are reserved 
+
+   ...
+*/
+internal void
+ftdi_test_DPIDR(FTDIApi *ftdi_api)
+{
+    u8 commands[] = 
+    {
+        goto_reset,
+        // first update the ir to dpacc
+        goto_shift_ir_from_reset, 
+        shift_in_4bits_and_exit(ir_DPACC),
+
+        // only write the RnW(bits[1:0]) & A value(bits[3:2])
+        goto_shift_dr_from_exit_ir, 
+        shift_in_35bits_and_exit(0, 0, ACC_read),
+
+        // we need another scan to read the result
+        goto_shift_dr_from_exit_dr,
+        shift_out_35bits_and_exit, 
+
+
+        goto_reset,
+    };
+    ftdi_write(ftdi_api, commands, array_count(commands));
+
+    ftdi_wait_receive_queue(ftdi_api, 5);
+
+    u8 receive_buffer[5] = {};
+    ftdi_read(ftdi_api, receive_buffer, 5);
+    ftdi_receive_queue_should_be_empty(ftdi_api);
+}
+
+internal void
+ftdi_test_TARGETID(FTDIApi *ftdi_api)
+{
+    u8 commands[] = 
+    {
+        goto_reset,
+        // first update the ir to dpacc
+        goto_shift_ir_from_reset, 
+        shift_in_4bits_and_exit(ir_DPACC),
+
+        // modify SELECT
+        goto_shift_dr_from_exit_ir, 
+        shift_in_35bits_and_exit(0x2, 0x8, ACC_write),
+
+        // only write the RnW(bits[1:0]) & A value(bits[3:2])
+        goto_shift_dr_from_exit_ir, 
+        shift_in_35bits_and_exit(0, 0x8, ACC_read),
+
+        // we need another scan to read the result
+        goto_shift_dr_from_exit_dr,
+        shift_out_35bits_and_exit, 
+
+        // read CTRL/STAT register
+        goto_shift_dr_from_exit_ir, 
+        shift_in_35bits_and_exit(0x0, 0x8, ACC_write),
+
+        // only write the RnW(bits[1:0]) & A value(bits[3:2])
+        goto_shift_dr_from_exit_ir, 
+        shift_in_35bits_and_exit(0, 0x4, ACC_read),
+
+        // we need another scan to read the result
+        goto_shift_dr_from_exit_dr,
+        shift_out_35bits_and_exit, 
+        
+        goto_reset,
+    };
+    ftdi_write(ftdi_api, commands, array_count(commands));
+
+    ftdi_wait_receive_queue(ftdi_api, 5);
+
+    u8 receive_buffer[5] = {};
+    ftdi_read(ftdi_api, receive_buffer, 5);
+    ftdi_receive_queue_should_be_empty(ftdi_api);
+}

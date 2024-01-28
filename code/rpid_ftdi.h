@@ -4,30 +4,79 @@
 #include "ftd2xx.h"
 
 // commands for the mpsse processor of the ftdi chip
-// command_tms_xx == without read
-// command_tms_read_xx == with read
-#define command_tms(length, byte) 0x4a, length, byte
+
+// TMS will be sampled on the rising edge of the tck
+// length should be <= 8. if the length is 8, the last value is always the initial value of TMS
+#define tms_noread(length, data, TDI) 0x4a, (length-1), ((TDI << 7) | data)
+#define tms_read(length, data, TDI) 0x6e, (length-1), ((TDI << 7) | data)
+
+// TCK will be sampled on the rising edge of the tck
+// length should be <= 8
+#define tdi_bit(length, data) 0x1b, (length-1), data
+#define tdi_byte
 
 // bit 7 controls what the TDI should be during moving the TMS,
 // we should use it to determine the last bit of TDI
-#define command_tms_goto_reset 0x4a, 4, 0b11111 
-#define command_tms_goto_shift_ir_from_reset 0x4a, 4, 0b00110
+#define goto_reset tms_noread(5, 0b11111, 0) 
 
-#define command_tms_goto_shift_dr_from_reset 0x4a, 3, 0b0010
-#define command_tms_goto_shift_dr_from_shift_ir(TDI) 0x4a, 4, ((TDI << 7) | 0b00111) // update-ir is implied
-#define command_tms_goto_shift_ir_from_shift_dr 0x4a, 5, 0b001111 // update-dr is implied
+// goto shift_ir
+#define goto_shift_ir_from_reset tms_noread(5, 0b00110, 0)
+#define goto_shift_ir_from_shift_dr tms_noread(6, 0b001111, 0) 
+
+// goto shift_dr
+#define goto_shift_dr_from_reset tms_noread(4, 0b0010, 0) 
+// #define goto_shift_dr_from_shift_ir(TDI) 0x4a, 4, ((TDI << 7) | 0b00111) // update-ir is implied
+#define goto_shift_dr_from_exit_ir tms_noread(4, 0b0011, 0) 
+#define goto_shift_dr_from_exit_dr tms_noread(4, 0b0011, 0)
  
-// 31 cycles in update + 1 cycle in exit == 32 cycles
-#define command_tms_read_shift_out_32bits_and_exit 0x6e, 7, 0x0, \
-                                                   0x6e, 7, 0x0, \
-                                                   0x6e, 7, 0x0, \
-                                                   0x6e, 7, 0x0, \
-                                                   0x4a, 0, 0x1
-                                                   // TODO(gh) this clocks out 33 bits of TDO, why?
-                                                   // 0x6e, 6, 0x0, \
-                                                   // 0x6e, 0, 0x1
+// 32 cycles in update + 1 cycle in exit == 33 cycles
+// each tms command will _always_ generate one byte, no matter what the length is(Command Processor for MPSSE and MCU Host Bus Emulation Modes p16)
+// the only way to do this in 4 commands(32 cycles) is by having a initial value of 1 for TMS
+#define shift_out_32bits_and_exit tms_read(8, 0, 0), \
+                                  tms_read(8, 0, 0), \
+                                    tms_read(8, 0, 0), \
+                                    tms_read(8, 0, 0), \
+                                    tms_noread(1, 1, 0)
 
-                                                    
+#define shift_out_35bits_and_exit tms_read(8, 0, 0), \
+                                  tms_read(8, 0, 0), \
+                                    tms_read(8, 0, 0), \
+                                    tms_read(8, 0, 0), \
+                                    tms_read(3, 0, 0), \
+                                    tms_noread(1, 1, 0)
+
+
+// useful for DPACC / APACC scan chain
+// data = 32 bits
+// A = 4 bits, but the bottom 2 bits are always 0. The address that is listed inside the ADIv5 document is full 4bits
+// RnW = 1bit(read = 0b1, write = 0b0)
+#define shift_in_35bits_and_exit(data, A, RnW) tdi_bit(3, ((A>>2) << 1) | RnW), \
+                                                tdi_bit(8, (data & 0xff)), \
+                                                tdi_bit(8, ((data >> 8) & 0xff)), \
+                                                tdi_bit(8, ((data >> 16) & 0xff)), \
+                                                tdi_bit(7, ((data >> 24) & 0x7f)), \
+                                                tms_noread(1, 1, (data>>31)&1)
+                                                        
+
+// TODO(gh) assert here if there are more than 4 bits?
+// the last TMS command is used to exit the state & give the last TDI bit
+#define shift_in_4bits_and_exit(bits) 0x1b, 0x02, (bits & 0x7), \
+                                      0x4a, 0x00, ((((bits>>3)&1) << 7) | 1)
+
+enum ACCRnW
+{
+    ACC_write = 0,
+    ACC_read = 1,
+};
+
+enum InstructionRegister 
+{
+    ir_ABORT = 0b1000,
+    ir_DPACC = 0b1010,
+    ir_APACC = 0b1011,
+    ir_IDCODE = 0b1110,
+    ir_BYPASS = 0b1111,
+};
 
 // FTDI functions that the debugger doesn't need to use.
 // the function types are defined as the original function name + _

@@ -461,36 +461,12 @@ int main(void)
         
         ftdi_receive_queue_should_be_empty(&ftdi_api);
 
-        u8 command[] = 
-        {
-            command_tms_goto_reset,
-            command_tms_goto_shift_dr_from_reset,
-            command_tms_read_shift_out_32bits_and_exit,
-            command_tms_goto_reset,
-        };
-        ftdi_write(&ftdi_api, command, array_count(command));
-
-        ftdi_wait_receive_queue(&ftdi_api, 4);
-
-        u8 idcode_buffer[4] = {};
-        ftdi_read(&ftdi_api, idcode_buffer, 4);
-        ftdi_receive_queue_should_be_empty(&ftdi_api);
-
-        /*
-           IDCODE structure
-           IDCODE should be 0x4ba00477 for raspberry pi 3 b+.
-
-           bit 0 should always be 1
-           bits [11:1] are the designer ID, which should be 0x43b(page B3-104 of ADIv5.0-5.2 document). In total, bits[11:0] should be 0x477
-           bits [27:12] are the part number, which should be 0xBA00, which stands for a JTAG-DP designed by ARM(page 3-4 CoreSight Technology System Design Guide)
-           bits [31:28] are the version number which is IMPLEMENTATION DEFINED.
-         */
-        assert((idcode_buffer[0] == 0x77) && 
-                (idcode_buffer[1] == 0x04) &&
-                (idcode_buffer[2] == 0xa0) &&
-                (idcode_buffer[3] == 0x4b));
-
-    }
+        // bunch of test routines
+        ftdi_test_IDCODE(&ftdi_api);
+        // ftdi_test_DPIDR(&ftdi_api);
+        // ftdi_test_TARGETID(&ftdi_api); 
+        
+    } // if(ftdi_library)
 
 #if 0
     // 2.5k -ish
@@ -502,12 +478,9 @@ int main(void)
     i32 window_height = 1080;
 #endif
 
-#if 1
-    // metal
     // TODO(gh): the value here is based on the pixel density, so we need to figure out a way to get the dpi of the monitor
     //NSRect window_rect = NSMakeRect(100.0f, 100.0f, (f32)window_width, (f32)window_height);
     NSRect window_rect = NSMakeRect(100.0f, 100.0f, (f32)window_width/2.0f, (f32)window_height/2.0f);
-
 
     u32 target_frames_per_second = 60;
     f32 target_seconds_per_frame = 1.0f/(f32)target_frames_per_second;
@@ -555,7 +528,6 @@ int main(void)
 
     [app activate];
     [app run];
-#endif
 
     is_running = true;
 #if 1
