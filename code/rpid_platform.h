@@ -138,7 +138,6 @@ struct PlatformMemory
     u64 transient_memory_size;
 };
 
-// TODO(gh) sub_arena!
 struct MemoryArena
 {
     void *base;
@@ -156,7 +155,6 @@ start_memory_arena(void *base, size_t size, b32 should_be_zero = true)
     result.base = (u8 *)base;
     result.total_size = size;
 
-    // TODO/gh :zeroing memory every time might not be a best idea
     if(should_be_zero)
     {
         // zero_memory(result.base, result.total_size);
@@ -204,7 +202,6 @@ struct TempMemory
 {
     MemoryArena *memory_arena;
 
-    // TODO/gh: temp memory is for arrays only, so dont need to keep track of 'used'?
     void *base;
     size_t total_size;
     size_t used;
@@ -246,7 +243,6 @@ start_temp_memory(MemoryArena *memory_arena, size_t size, b32 should_be_zero = t
     return result;
 }
 
-// TODO(gh) no need to pass the pointer
 internal void
 end_temp_memory(TempMemory *temp_memory)
 {
@@ -263,7 +259,7 @@ u64 rdtsc(void)
 {
 	u64 val;
 #if RPID_ARM 
-    // TODO(gh) Counter count seems like it's busted, find another way to do this
+    // TODO(gh) Counter seems to be busted 
 	asm volatile("mrs %0, cntvct_el0" : "=r" (val));
 #elif RPID_X64
     val = __rdtsc();

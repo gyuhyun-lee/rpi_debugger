@@ -22,6 +22,7 @@
 #include "rpid_intrinsic.h"
 #include "rpid_platform.h"
 #include "rpid_ftdi.cpp" 
+#include "rpid_jtag_command_buffer.cpp"
 
 // TODO(gh): Get rid of global variables?
 global v2 last_mouse_p;
@@ -392,6 +393,7 @@ int main(void)
             VM_FLAGS_ANYWHERE);
     platform_memory.transient_memory = (u8 *)platform_memory.permanent_memory + platform_memory.permanent_memory_size;
 
+
     // load ftdi library
     void *ftdi_library = dlopen("../lib/libftd2xx.1.4.24.dylib", RTLD_LAZY|RTLD_GLOBAL);
     FTDIApi ftdi_api = {};
@@ -458,13 +460,49 @@ int main(void)
         u32 bytes_written;
         assert(ftdi_api.ft_Write(ftdi_api.handle, jtag_setup_commands, command_byte_count, &bytes_written) == FT_OK);
         assert(command_byte_count == bytes_written);
-        
         ftdi_receive_queue_should_be_empty(&ftdi_api);
+
+        // initialize ARM 
+        /*
+           Initializing ARM ADI
+           There are three power domains in the ADI.
+           1. Always on power domain - DP registers
+           2. Debug power domain - required for debugging
+           3. System power domain
+
+            we shoud power on the debug & system power domains
+            to read from the AP
+         */
+    
+        {
+            u8 arm_init_commands[] = 
+            {
+                goto_reset,
+                goto_shift_ir_from_reset,
+                shift_in_4bits_and_exit(IR_DPACC),
+                goto_shift_dr_from_exit_ir,
+
+                // power on the debug & system power domain
+                // by writing to bits 28 & 30
+                shift_in_35bits_and_exit(DPACC_write, 0x4, ((1 << 30) | (1 << 28))),
+                goto_reset,
+            };
+
+            ftdi_write(&ftdi_api, arm_init_commands, array_count(arm_init_commands));
+            ftdi_receive_queue_should_be_empty(&ftdi_api);
+        }
+
+        // this assumes that the jtag stm is at the reset state
+        JTAGCommandBuffer jtag_command_buffer;
+        // TODO(gh) for now we are using malloc, but this should be gone
+        // as soon as we have a memory allocator(memory arena) working
+        u32 command_buffer_memory_size = 1024;
+        u8 *command_buffer_base_memory = (u8 *)malloc(command_buffer_memory_size);
+        initialize_jtag_command_buffer(&jtag_command_buffer, command_buffer_base_memory, command_buffer_memory_size); 
 
         // bunch of test routines
         ftdi_test_IDCODE(&ftdi_api);
-        // ftdi_test_DPIDR(&ftdi_api);
-        // ftdi_test_TARGETID(&ftdi_api); 
+        ftdi_test_IDR(&ftdi_api);
         
     } // if(ftdi_library)
 

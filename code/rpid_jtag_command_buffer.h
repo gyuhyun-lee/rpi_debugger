@@ -1,0 +1,4 @@
+#ifndef RPID_JTAG_COMMAND_BUFFER
+#define RPID_JTAG_COMMAND_BUFFER
+
+#endif

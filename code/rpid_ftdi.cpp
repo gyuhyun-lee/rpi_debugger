@@ -81,7 +81,7 @@ ftdi_test_IDCODE(FTDIApi *ftdi_api)
     {
         goto_reset,
         goto_shift_ir_from_reset,
-        shift_in_4bits_and_exit(ir_IDCODE),
+        shift_in_4bits_and_exit(IR_IDCODE),
 
         goto_shift_dr_from_exit_ir,
         shift_out_32bits_and_exit,
@@ -122,11 +122,11 @@ ftdi_test_DPIDR(FTDIApi *ftdi_api)
         goto_reset,
         // first update the ir to dpacc
         goto_shift_ir_from_reset, 
-        shift_in_4bits_and_exit(ir_DPACC),
+        shift_in_4bits_and_exit(IR_DPACC),
 
         // only write the RnW(bits[1:0]) & A value(bits[3:2])
         goto_shift_dr_from_exit_ir, 
-        shift_in_35bits_and_exit(0, 0, ACC_read),
+        shift_in_35bits_and_exit(DPACC_read, 0, 0),
 
         // we need another scan to read the result
         goto_shift_dr_from_exit_dr,
@@ -144,47 +144,71 @@ ftdi_test_DPIDR(FTDIApi *ftdi_api)
     ftdi_receive_queue_should_be_empty(ftdi_api);
 }
 
+
+/*
+    IDR is the AP identification register that is located at 0xFC.
+    Each AP is required to have IDR.
+*/
 internal void
-ftdi_test_TARGETID(FTDIApi *ftdi_api)
+ftdi_test_IDR(FTDIApi *ftdi_api)
 {
     u8 commands[] = 
     {
         goto_reset,
-        // first update the ir to dpacc
+
+        // update SELECT
         goto_shift_ir_from_reset, 
-        shift_in_4bits_and_exit(ir_DPACC),
-
-        // modify SELECT
+        shift_in_4bits_and_exit(IR_DPACC),
         goto_shift_dr_from_exit_ir, 
-        shift_in_35bits_and_exit(0x2, 0x8, ACC_write),
-
-        // only write the RnW(bits[1:0]) & A value(bits[3:2])
-        goto_shift_dr_from_exit_ir, 
-        shift_in_35bits_and_exit(0, 0x8, ACC_read),
+        shift_in_35bits_and_exit(DPACC_write, DR_SELECT, SELECT_APACC(0, 0xf)),
+        
+        // read the AP register
+        goto_shift_ir_from_exit_dr,
+        shift_in_4bits_and_exit(IR_APACC),
+        goto_shift_dr_from_exit_ir,
+        shift_in_35bits_and_exit(APACC_read, 0xC, 0),
 
         // we need another scan to read the result
+
         goto_shift_dr_from_exit_dr,
-        shift_out_35bits_and_exit, 
+        shift_out_35bits_and_exit,
 
-        // read CTRL/STAT register
-        goto_shift_dr_from_exit_ir, 
-        shift_in_35bits_and_exit(0x0, 0x8, ACC_write),
+        // debug, retrying the read so that 
+        // goto_shift_dr_from_exit_dr,
+        //shift_out_35bits_and_exit, 
 
-        // only write the RnW(bits[1:0]) & A value(bits[3:2])
-        goto_shift_dr_from_exit_ir, 
-        shift_in_35bits_and_exit(0, 0x4, ACC_read),
-
-        // we need another scan to read the result
+#if 0
+        // debug, get the ctrl/stat register
+        goto_shift_ir_from_exit_dr,
+        shift_in_4bits_and_exit(IR_DPACC),
+        goto_shift_dr_from_exit_ir,
+        shift_in_35bits_and_exit(DPACC_write, DR_CTRL_STAT, 0),
         goto_shift_dr_from_exit_dr,
-        shift_out_35bits_and_exit, 
+        shift_out_35bits_and_exit,
+#endif
         
         goto_reset,
     };
     ftdi_write(ftdi_api, commands, array_count(commands));
-
     ftdi_wait_receive_queue(ftdi_api, 5);
 
     u8 receive_buffer[5] = {};
     ftdi_read(ftdi_api, receive_buffer, 5);
     ftdi_receive_queue_should_be_empty(ftdi_api);
+
+    // TODO(gh) this should fire because we're getting the right data
+    // but with the 'wait' bit set
+    assert(((receive_buffer[0] & (1<<5)) == 0) &&
+            (receive_buffer[1] == 0x77) && 
+            (receive_buffer[2] == 0x04) &&
+            (receive_buffer[3] == 0xa0) &&
+            (receive_buffer[4] == 0x4b));
 }
+
+
+
+
+
+
+
+

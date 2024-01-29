@@ -13,7 +13,7 @@
 // TCK will be sampled on the rising edge of the tck
 // length should be <= 8
 #define tdi_bit(length, data) 0x1b, (length-1), data
-#define tdi_byte
+#define tdi_byte // TODO(gh) this would be better if we have a bunch of bytes to send through TDI
 
 // bit 7 controls what the TDI should be during moving the TMS,
 // we should use it to determine the last bit of TDI
@@ -21,7 +21,7 @@
 
 // goto shift_ir
 #define goto_shift_ir_from_reset tms_noread(5, 0b00110, 0)
-#define goto_shift_ir_from_shift_dr tms_noread(6, 0b001111, 0) 
+#define goto_shift_ir_from_exit_dr tms_noread(5, 0b00111, 0) 
 
 // goto shift_dr
 #define goto_shift_dr_from_reset tms_noread(4, 0b0010, 0) 
@@ -38,44 +38,76 @@
                                     tms_read(8, 0, 0), \
                                     tms_noread(1, 1, 0)
 
-#define shift_out_35bits_and_exit tms_read(8, 0, 0), \
+// TODO(gh) for now, we will just accept the fact that there's no way to 
+// get the bits in the order & position (without the garbage bits) that we want as long as we're reading
+// less than 8 bits. this works in this case because the first 3 bits are 
+// the ACK bits, which tell us whether the operation was a success or not.
+// TL:DR, the first byte would have :
+// bit 5 set if the result was WAIT
+// bit 4 set if the result was OK/FAULT
+#define shift_out_35bits_and_exit tms_read(3, 0, 0), \
+                                  tms_read(8, 0, 0), \
                                   tms_read(8, 0, 0), \
                                     tms_read(8, 0, 0), \
                                     tms_read(8, 0, 0), \
-                                    tms_read(3, 0, 0), \
                                     tms_noread(1, 1, 0)
 
+                                    
 
 // useful for DPACC / APACC scan chain
 // data = 32 bits
-// A = 4 bits, but the bottom 2 bits are always 0. The address that is listed inside the ADIv5 document is full 4bits
+// A = 4 bits, but the bottom 2 bits are always 0 so we can only modify the top 2 bits. 
+// The address that is listed inside the ADIv5 document is full 4bits
 // RnW = 1bit(read = 0b1, write = 0b0)
-#define shift_in_35bits_and_exit(data, A, RnW) tdi_bit(3, ((A>>2) << 1) | RnW), \
+#define shift_in_35bits_and_exit(RnW, A, data) tdi_bit(3, ((A>>2) << 1) | RnW), \
                                                 tdi_bit(8, (data & 0xff)), \
                                                 tdi_bit(8, ((data >> 8) & 0xff)), \
                                                 tdi_bit(8, ((data >> 16) & 0xff)), \
                                                 tdi_bit(7, ((data >> 24) & 0x7f)), \
                                                 tms_noread(1, 1, (data>>31)&1)
-                                                        
+
+// shift in 35 bits of data while shifting out the same amount 
+#define shift_inout_35bits_and_exit(RnW, A, data) tms_read(8, 0, 0), \
+                                          tms_read(8, 0, 0), \
+                                          tms_read(8, 0, 0), \
+                                          tms_read(8, 0, 0), \
 
 // TODO(gh) assert here if there are more than 4 bits?
 // the last TMS command is used to exit the state & give the last TDI bit
 #define shift_in_4bits_and_exit(bits) 0x1b, 0x02, (bits & 0x7), \
                                       0x4a, 0x00, ((((bits>>3)&1) << 7) | 1)
 
-enum ACCRnW
+// Coresight macro defines
+// APSEL should be 8 bits, APBANKSEL should be 4 bits
+#define SELECT_APACC(APSEL, APBANKSEL) ((APSEL << 24) | (APBANKSEL << 4))
+#define SELECT_DPACC(DPBANKSEL) DPBANKSEL
+
+// same as the other one, but just here for better code readability
+enum DPACCRnW
 {
-    ACC_write = 0,
-    ACC_read = 1,
+    DPACC_write = 0,
+    DPACC_read = 1,
+};
+enum APACCRnW
+{
+    APACC_write = 0,
+    APACC_read = 1,
 };
 
 enum InstructionRegister 
 {
-    ir_ABORT = 0b1000,
-    ir_DPACC = 0b1010,
-    ir_APACC = 0b1011,
-    ir_IDCODE = 0b1110,
-    ir_BYPASS = 0b1111,
+    IR_ABORT = 0b1000,
+    IR_DPACC = 0b1010,
+    IR_APACC = 0b1011,
+    IR_IDCODE = 0b1110,
+    IR_BYPASS = 0b1111,
+};
+
+enum DPRegister
+{
+    DR_CTRL_STAT = 0x4,
+    DR_SELECT = 0x8,
+    DR_RDBUFF = 0xC,
 };
 
 // FTDI functions that the debugger doesn't need to use.
