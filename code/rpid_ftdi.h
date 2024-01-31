@@ -3,6 +3,23 @@
 
 #include "ftd2xx.h"
 
+// TDI & TMS should change before the rising edge of TCK 
+// TDO will be sampled at the falling edge of TCK
+// TODO(gh) FTDI has both the TDO sample & TMS with read commands
+// what's the difference?
+enum FTDICommand
+{
+    FTDI_COMMAND_SHIFT_IN_BITS = 0x1b,
+    FTDI_COMMAND_SHIFT_IN_BYTES = 0x19,
+
+    FTDI_COMMAND_SHIFT_OUT_BITS = 0x6e,
+
+    // FTDI_COMMAND_SHIFT_INOUT_BITS = ,
+    // FTDI_COMMAND_SHIFT_INOUT_BYTES = ,
+
+    FTDI_COMMAND_MOVE_STM = 0x4a, // without read, if you wanna read something use shift_out_bits
+};
+
 // commands for the mpsse processor of the ftdi chip
 
 // TMS will be sampled on the rising edge of the tck
@@ -94,7 +111,7 @@ enum APACCRnW
     APACC_read = 1,
 };
 
-enum InstructionRegister 
+enum IR4Type
 {
     IR_ABORT = 0b1000,
     IR_DPACC = 0b1010,
