@@ -14,13 +14,20 @@
 //   however, this is only useful if the code that does this takes less time than actually changing the address
 // - command re-ordering
 //   a bit too extreme, this too might take longer than just executing the commands
-// - pipelining
-//   if the instruction is same, we can both write while reading, or request for read while reading.
 
 // MUST HAVE
 // - OK/FAULT - WAIT detection(retry if the bit was WAIT) 
 // - cable-agnostic command buffer for RP2040 based debug probe
 // - buffer overflow detection
+// - pipelining
+//   if the instruction is same, we can both write while reading, or request for read while reading.
+
+/*
+   - BD0-3 when can we use this? When would this be faster than DRW + TAR auto-increment?
+   - find out : how many cycles do we need to wait to get the MEM-AP registers
+   - Read out the BASE register, which is in theory the address of the ROM table
+   - ROM table - TAR should be BASE + 0xFF0 + n×4
+*/
 
 // 16 states
 enum JTAGState
@@ -54,6 +61,17 @@ enum JTAGDROffsetA
     A_CTRL_STAT = 0x4,
     A_RDBUFF = 0xC,
     A_SELECT = 0x8,
+};
+
+enum IR4Type
+{
+    IR_ABORT = 0b1000,
+    IR_DPACC = 0b1010,
+    IR_APACC = 0b1011,
+    IR_IDCODE = 0b1110,
+    IR_BYPASS = 0b1111,
+
+    IR_NULL = 0xffffffff,
 };
 
 struct JTAGCommandBuffer

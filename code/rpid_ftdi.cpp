@@ -66,6 +66,7 @@ ftdi_receive_queue_should_be_empty(FTDIApi *ftdi_api)
     assert(remaining_bytes == 0);
 }
 
+#if 0
 /*
    IDCODE should be 0x4ba00477 for raspberry pi 3 b+.
 
@@ -100,6 +101,7 @@ ftdi_test_IDCODE(FTDIApi *ftdi_api)
             (receive_buffer[2] == 0xa0) &&
             (receive_buffer[3] == 0x4b));
 }
+
 
 /*
    DPIDR(debug port identification register) - only present in DPv1 & DPv2
@@ -204,6 +206,7 @@ ftdi_test_IDR(FTDIApi *ftdi_api)
             (receive_buffer[3] == 0xa0) &&
             (receive_buffer[4] == 0x4b));
 }
+#endif
 
 
 

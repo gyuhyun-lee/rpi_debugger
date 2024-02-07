@@ -475,15 +475,43 @@ int main(void)
             we shoud power on the debug & system power domains
             to read from the AP
          */
-#if 0 
         push_DPACC_write(&jtag_command_buffer, ((1 << 30) | (1 << 28)), A_CTRL_STAT);
         flush_jtag_command_buffer(&jtag_command_buffer, &ftdi_api);
         ftdi_receive_queue_should_be_empty(&ftdi_api);
+
+#if 0
+        // TODO(gh) reset the debug + system domain at initialization
+        {
+            u8 arm_init_commands[] = 
+            {
+                goto_reset,
+                goto_shift_ir_from_reset,
+                shift_in_4bits_and_exit(IR_DPACC),
+                goto_shift_dr_from_exit_ir,
+
+                // power on the debug & system power domain
+                // by writing to bits 28 & 30
+                shift_in_35bits_and_exit(DPACC_write, 0x4, ((1 << 30) | (1 << 28))),
+                goto_reset,
+            };
+
+            ftdi_write(&ftdi_api, arm_init_commands, array_count(arm_init_commands));
+            ftdi_receive_queue_should_be_empty(&ftdi_api);
+        }
 #endif
 
+        // read & write the same register 1000 times to see if we'll ever get the wait bit set
+        
+
         // bunch of test routines
-        ftdi_test_IDCODE(&ftdi_api);
-        // ftdi_test_IDR(&ftdi_api);
+        // push_test_IDCODE(&jtag_command_buffer);
+        // push_test_RDBUFF(&jtag_command_buffer);
+        push_test_IDR0(&jtag_command_buffer);
+
+        push_DPACC_read(&jtag_command_buffer, 0x4, 0x4); // test dpv0 vs dpv1
+        push_move_state_machine(&jtag_command_buffer, RESET);
+        // push_DPACC_read(&jtag_command_buffer, 0x4);
+        flush_jtag_command_buffer(&jtag_command_buffer, &ftdi_api);
         
     } // if(ftdi_library)
 
@@ -554,7 +582,7 @@ int main(void)
     while(is_running)
     {
         // main loop
-        MTLRenderPassDescriptor* renderpass = view.currentRenderPassDescriptor;
+        MTLRenderPassDescriptor* renderpass = view.currentRenderPassDescriptor; // TODO(gh) memory leak
         if(renderpass)
         {
         }

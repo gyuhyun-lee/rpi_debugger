@@ -111,14 +111,6 @@ enum APACCRnW
     APACC_read = 1,
 };
 
-enum IR4Type
-{
-    IR_ABORT = 0b1000,
-    IR_DPACC = 0b1010,
-    IR_APACC = 0b1011,
-    IR_IDCODE = 0b1110,
-    IR_BYPASS = 0b1111,
-};
 
 enum DPRegister
 {
