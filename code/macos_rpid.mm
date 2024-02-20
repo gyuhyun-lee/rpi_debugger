@@ -12,6 +12,10 @@
 #import <metalkit/metalkit.h>
 #import <metal/metal.h>
 #import <MetalPerformanceShaders/MetalPerformanceShaders.h>
+// USB
+#import <IOKit/IOKitLib.h>
+#import <IOKit/usb/IOUsbLib.h>
+#import <IOKit/IOCFPlugIn.h>
 
 // need to undef these from the macos framework 
 // so that we can define these ourselves
@@ -23,6 +27,22 @@
 #include "rpid_platform.h"
 #include "rpid_ftdi.cpp" 
 #include "rpid_jtag_command_buffer.cpp"
+#include "rpid_usb.cpp"
+/*
+   RP2040 2.4.2.8 There are no separate power domains on RP2040
+   So when I read from the ctrl/stat register, both the system & debug power domain should be on? or off?
+
+   Interpolator can be useful because we can treat it as as an extra register. i.e we can do the address + offset calculation by storing the address register inside the interpolator
+   Although the rate of the clocks that the PMU is generating all the same(also same as the clk_sys), the power output(whether '1' should be 3.3v or 1.8v ... and so on) is different. 
+
+
+    PMU - power management unit
+    MPU - Memory protection unit 
+    NVIC -  / WIC
+
+    TODO(gh) RP2040 tests
+    - RP2040 boot sequence says that at startup, it uses a 48MHZ system/usb clock. test this by big-baning one of the GPIOs up and down and then measure the timing using the logic analyzer.
+ */
 
 // TODO(gh): Get rid of global variables?
 global v2 last_mouse_p;
@@ -373,6 +393,530 @@ macos_load_game_code(MacOSGameCode *game_code, char *file_name)
     }
 }
 
+// this is a callback function from the IOKit when it detects a matching usb device.
+// TODO(gh) one thing to note is that MacOS sometimes cache the device even though the device has been disconnected.
+// so if the user plugs the device in and out and then in, OS might not call this because it already has the information 
+// of the device. 
+internal void 
+raw_usb_device_added(void *refCon, io_iterator_t io_iter)
+{
+    io_service_t usb_device_iter = IOIteratorNext(io_iter); // returns 0 if there is no more device
+    RP2040USBInterface usb_interface = {};
+
+    IOUSBDeviceInterface        **usb_device = 0; 
+    while (usb_device_iter)
+    {
+        IOCFPlugInInterface         **plugin_interface = 0;
+        /*
+           USB Device Descriptor
+            offset                  size        description
+            0	    bLength	        1           Size of the Descriptor in Bytes (18 bytes)
+            1	    bDescriptorType	1           Device Descriptor (0x01)
+            2	    bcdUSB          2           USB Specification Number which device complies too.
+            4	    bDeviceClass	1	        If equal to Zero, each interface specifies it’s own class code. 
+                                                If equal to 0xFF, the class code is vendor specified.
+                                                Otherwise field is valid Class Code.
+            5	bDeviceSubClass	    1		    Subclass Code (Assigned by USB Org)
+            6	bDeviceProtocol	    1		    Protocol Code (Assigned by USB Org)
+            7	bMaxPacketSize	    1		    Maximum Packet Size for Zero Endpoint. Valid Sizes are 8, 16, 32, 64
+            8	idVendor	        2	        Vendor ID (Assigned by USB Org)
+            10	idProduct	        2           Product ID (Assigned by Manufacturer)
+            12	bcdDevice	        2	        Device Release Number
+            14	iManufacturer	    1		    Index of Manufacturer String Descriptor
+            15	iProduct	        1		    Index of Product String Descriptor
+            16	iSerialNumber	    1	        Index of Serial Number String Descriptor
+            17	bNumConfigurations	1	        Number of Possible Configurations
+         */
+        i32 score;
+
+        // create an intermediate plug-in
+        // TODO(gh) this function is not documented, and seems like it's hanging the xcode(but works fine on CLion)
+        IOCreatePlugInInterfaceForService(usb_device_iter,
+                                          kIOUSBDeviceUserClientTypeID, kIOCFPlugInInterfaceID,
+                                          &plugin_interface, &score);
+        IOObjectRelease(usb_device_iter); // don’t need the device object after intermediate plug-in is created
+        if(!plugin_interface)
+        {
+            printf("unable to create a plug-in\n");
+            continue;
+        }
+
+        // create the device interface
+        (*plugin_interface)->QueryInterface(plugin_interface,
+                                                     CFUUIDGetUUIDBytes(kIOUSBDeviceInterfaceID),
+                                                     (void **)&usb_device);
+        (*plugin_interface)->Release(plugin_interface); // don’t need the intermediate plug-in after device interface is created
+        if (!usb_device)
+        {
+            printf("couldn’t create a device interface\n");
+            continue;
+        }
+ 
+        // check these values for confirmation
+        u16 vendor_ID;
+        u16 product_ID;
+        (*usb_device)->GetDeviceVendor(usb_device, &vendor_ID);
+        (*usb_device)->GetDeviceProduct(usb_device, &product_ID);
+
+        if((vendor_ID == 0x2e8a) && product_ID == 0x3)
+        {
+            printf("found the debug probe\n");
+            if ((*usb_device)->USBDeviceOpen(usb_device) != kIOReturnSuccess)
+            {
+                printf("unable to open the USB device\n");
+                (*usb_device)->Release(usb_device);
+
+                // TODO(gh) log
+                assert(0);
+            }
+
+            break;
+        }
+
+        // not RP2040, move on to the next one
+        (*usb_device)->Release(usb_device);
+        usb_device_iter = IOIteratorNext(io_iter); // returns 0 if there is no more device
+    } // while(usb_device_iter)
+
+    // configure device
+    if(usb_device)
+    {
+        u8 config_count;
+        (*usb_device)->GetNumberOfConfigurations(usb_device, &config_count);
+        assert(config_count == 1); // there should be only 1 config, which is PICOBOOT
+        if(config_count != 0)
+        {
+            /*
+               configuration descriptor 
+                offset                  size        description
+                0	    bLength	        1	        Size of Descriptor in Bytes 
+                1	    bDescriptorType	1           Configuration Descriptor (0x02)
+                2	    wTotalLength	2	        Total length in bytes of data returned
+                4	    bNumInterfaces	1	        Number of Interfaces
+                5	bConfigurationValue	1	        Value to use as an argument to select this configuration
+                6	iConfiguration	    1		    Index of String Descriptor describing this configuration
+                7	bmAttributes	    1	        D7 Reserved, set to 1. (USB 1.0 Bus Powered)
+                                                    D6 Self Powered
+                                                    D5 Remote Wakeup
+                                                    D4..0 Reserved, set to 0.
+                8	bMaxPower	        1		    Maximum Power Consumption in 2mA units
+             */
+            // get the first configuration descriptor 
+            IOUSBConfigurationDescriptorPtr config_desc;
+            if((*usb_device)->GetConfigurationDescriptorPtr(usb_device, 0, &config_desc) == kIOReturnSuccess)
+            {
+                // set the device’s configuration. The configuration value is found in
+                // the bConfigurationValue field of the configuration descriptor
+                if((*usb_device)->SetConfiguration(usb_device, config_desc->bConfigurationValue) == kIOReturnSuccess)
+                {
+                    // success
+                    printf("configured the usb device for the first-time\n");
+                }
+                else
+                {
+                    // TODO(gh) log
+                    printf("failed to set the configuration using index %u", 0);
+                    assert(0);
+                }
+            }
+            else
+            {
+                // TODO(gh) log
+                printf("failed to get the configuration descriptor for index %u\n", 0);
+                assert(0);
+            }
+        }
+        else
+        {
+            // TODO(gh) log
+            printf("no configuration available for this usb device\n");
+            assert(0);
+        }
+
+        // find the bulk transfer interface of the RP2040 PICOBOOT using the values that were specified in RP2040 DS
+        IOUSBFindInterfaceRequest request;
+        request.bInterfaceClass = 0xff; // vendor specific
+        request.bInterfaceSubClass = 0;
+        request.bInterfaceProtocol = 0;
+        request.bAlternateSetting = kIOUSBFindInterfaceDontCare;
+        io_iterator_t interface_iter;
+        (*usb_device)->CreateInterfaceIterator(usb_device,
+                                                &request, &interface_iter);
+        io_service_t usb_interface_iter = IOIteratorNext(interface_iter);
+        if(usb_interface_iter) // there should be only 1 interface, which is why this is not a while loop
+        {
+            //Create an intermediate plug-in
+            IOCFPlugInInterface         **plugin_interface = 0;
+            i32 score;
+            IOCreatePlugInInterfaceForService(usb_interface_iter,
+                                            kIOUSBInterfaceUserClientTypeID,
+                                            kIOCFPlugInInterfaceID,
+                                            &plugin_interface, &score);
+            //Release the usbInterface object after getting the plug-in
+            IOObjectRelease(usb_interface_iter);
+            if (!plugin_interface)
+            {
+                printf("unable to create a plug-in\n");
+                // TODO(gh) log
+                assert(0);
+            }
+
+            //Now create the device interface for the interface
+            /*
+               interface descriptor
+                offset                  size        description
+                0	    bLength	        1	        Size of Descriptor in Bytes (9 Bytes)
+                1	    bDescriptorType	1	        Interface Descriptor (0x04)
+                2	bInterfaceNumber	1	        Number of Interface
+                3	bAlternateSetting	1	        Value used to select alternative setting
+                4	bNumEndpoints	    1	        Number of Endpoints used for this interface
+                5	bInterfaceClass	    1	        Class Code (Assigned by USB Org)
+                6	bInterfaceSubClass	1	        Subclass Code (Assigned by USB Org)
+                7	bInterfaceProtocol	1	        Protocol Code (Assigned by USB Org)
+                8	iInterface	        1	        Index of String Descriptor Describing this interface
+            */
+            IOUSBInterfaceInterface **macos_usb_interface = 0;
+            (*plugin_interface)->QueryInterface(plugin_interface,
+                                                CFUUIDGetUUIDBytes(kIOUSBInterfaceInterfaceID),
+                                                (LPVOID *) &macos_usb_interface);
+            // no longer need the intermediate plug-in
+            (*plugin_interface)->Release(plugin_interface);
+            if(!macos_usb_interface)
+            {
+                printf("unable to get usb interface desc\n");
+
+                // TODO(gh) log
+                assert(0);
+            }
+
+            // double-check the class & sub-class IDs
+            u8 interface_class;
+            u8 interface_subclass;
+            u8 interface_number; // should be 1 for PICOBOOT
+            (*macos_usb_interface)->GetInterfaceClass(macos_usb_interface,
+                                                &interface_class);
+            (*macos_usb_interface)->GetInterfaceSubClass(macos_usb_interface,
+                                                &interface_subclass);
+            (*macos_usb_interface)->GetInterfaceNumber(macos_usb_interface,
+                                                        &interface_number);
+            assert((interface_class == 0xff) && (interface_subclass == 0) && (interface_number == 1));
+
+            if((*macos_usb_interface)->USBInterfaceOpen(macos_usb_interface) == kIOReturnSuccess)
+            {
+                usb_interface.macos_usb_interface = macos_usb_interface;
+            }
+            else
+            {
+                printf("unable to open the usb interface\n");
+                // TODO(gh) log
+                assert(0);
+            }
+        }
+    } // if(usb_device)
+
+    // get bulk in/out endpoint indices
+    if(usb_interface.macos_usb_interface)
+    {
+        IOUSBInterfaceInterface **macos_usb_interface = usb_interface.macos_usb_interface;
+
+        u8 endpoint_count = 0;
+        (*macos_usb_interface)->GetNumEndpoints(macos_usb_interface, &endpoint_count);
+        assert(endpoint_count == 2); // there should be only two endpoints, bulk 'in' and 'out'
+
+        // since RP2040 DS says that we should not rely on the index of the endpoints, 
+        // loop to find which endpoint is 'in' or 'out'
+        for(u32 endpoint_index = 1;
+                endpoint_index < (endpoint_count + 1); // disregard the 0th endpoint(control endpoint)
+                endpoint_index++)
+        {
+            /*
+                endpoint descriptor
+                offset                  size        description
+                0	    bLength	        1	        Size of Descriptor in Bytes (7 bytes)
+                1	bDescriptorType	    1	        Endpoint Descriptor (0x05)
+                2	bEndpointAddress	1	        Endpoint Address
+                                                    Bits 0..3b Endpoint Number.
+                                                    Bits 4..6b Reserved. Set to Zero
+                                                    Bits 7 Direction 0 = Out, 1 = In (Ignored for Control Endpoints)
+
+                3	bmAttributes	    1	        Bits 0..1 Transfer Type
+                                                    00 = Control
+                                                    01 = Isochronous
+                                                    10 = Bulk
+                                                    11 = Interrupt
+                                                    Bits 2..7 are reserved. If Isochronous endpoint,
+                                                    Bits 3..2 = Synchronisation Type (Iso Mode)
+                                                    00 = No Synchonisation
+                                                    01 = Asynchronous
+                                                    10 = Adaptive
+                                                    11 = Synchronous
+                                                    Bits 5..4 = Usage Type (Iso Mode)
+                                                    00 = Data Endpoint
+                                                    01 = Feedback Endpoint
+                                                    10 = Explicit Feedback Data Endpoint
+                                                    11 = Reserved
+
+                4	wMaxPacketSize	2	            Maximum Packet Size this endpoint is capable of sending or receiving
+                6	bInterval	    1	            Interval for polling endpoint data transfers. Value in frame counts. 
+                                                    Ignored for Bulk & Control Endpoints. 
+                                                    Isochronous must equal 1 and field may range from 1 to 255 for interrupt endpoints.
+             */
+
+            // RP2040 has 3 endpoints in PICOBOOT mode, the first one is always the control endpoint which isn't part of num_endpoint.
+            // we can use this one to send the control requests(RP2040 DS 2.8.5.5)
+            // rest of them are bulk in/out endpoints
+            // for more information, see https://github.com/raspberrypi/pico-bootrom/blob/master/bootrom/usb_boot_device.c
+            u8 direction;
+            u8 index;
+            u8 transfer_type;
+            u16 max_packet_size;
+            u8 interval; 
+            if((*macos_usb_interface)->GetPipeProperties(macos_usb_interface,
+                                                    endpoint_index, &direction,
+                                                    &index, &transfer_type,
+                                                    &max_packet_size, &interval) == kIOReturnSuccess)
+            {
+                assert(transfer_type == kUSBBulk); // kUSBBulk == 2
+                switch(direction)
+                {
+                    case kUSBOut: // 0
+                    {
+                        usb_interface.bulk_out_endpoint_index = (u8)endpoint_index;
+                    }break;
+
+                    case kUSBIn: // 1
+                    {
+                        usb_interface.bulk_in_endpoint_index = (u8)endpoint_index;
+                    }break;
+
+                    default :
+                    {
+                        // TODO(gh) log, we're not expecting any other endpoints
+                        assert(0); 
+                    }
+                }
+            }
+            else
+            {
+                // TODO(gh) log
+                printf("couldn't get any endpoint index\n");
+                assert(0);
+            }
+        }
+    } // if(usb_interface.macos_usb_interface)
+
+    // clear any stall/halt bits from every endpoints
+    // TODO(gh) not sure if this is actually necessary?
+    // assert((*macos_usb_interface)->ClearPipeStallBothEnds(macos_usb_interface, 0) == kIOReturnSuccess);
+    assert((*usb_interface.macos_usb_interface)->ClearPipeStallBothEnds(usb_interface.macos_usb_interface, usb_interface.bulk_in_endpoint_index) == kIOReturnSuccess);
+    assert((*usb_interface.macos_usb_interface)->ClearPipeStallBothEnds(usb_interface.macos_usb_interface, usb_interface.bulk_out_endpoint_index) == kIOReturnSuccess);
+
+#if 0
+    // reboot
+    {
+        PicoBootCommand *reboot_command = (PicoBootCommand *)malloc(sizeof(PicoBootCommand));
+        reboot_command->magic = PICOBOOT_COMMAND_MAGIC_VALUE;
+        reboot_command->token = 0xdcdcdcdc;
+        reboot_command->command_ID = 0x2;
+        reboot_command->command_size = 0x0c;
+        reboot_command->pad0 = 0;
+        reboot_command->transfer_length = 0;
+        reboot_command->args[0] = 0; 
+        reboot_command->args[1] = 0; 
+        reboot_command->args[2] = 0; 
+
+        IOReturn kr = (*macos_usb_interface)->WritePipe(macos_usb_interface, bulk_out_endpoint_index, reboot_command, sizeof(PicoBootCommand));
+        assert(kr == kIOReturnSuccess);
+
+        u32 read_buffer[4] = {};
+        macos_get_usb_command_status(macos_usb_interface, read_buffer);
+    }
+#endif
+
+    // reset the pipe using the control pipeline,
+    // here we cannot use WritePipe and should use ControlRequest
+    {
+        IOUSBDevRequest *setup_packet = (IOUSBDevRequest *)malloc(sizeof(IOUSBDevRequest));
+        setup_packet->bmRequestType = 0b01000001;
+        setup_packet->bRequest = 0b01000001;
+        setup_packet->wValue = 0;
+        setup_packet->wIndex = 1; // TODO(gh) this is quite confusing
+        setup_packet->wLength = 0;
+
+        IOReturn kr = (*usb_interface.macos_usb_interface)->ControlRequest(usb_interface.macos_usb_interface, 0, setup_packet);
+        assert(kr == kIOReturnSuccess);
+    }
+
+#if 0
+    // get exclusive access
+    {
+        PicoBootCommand *excl_command = (PicoBootCommand *)malloc(sizeof(PicoBootCommand));
+        excl_command->magic = PICOBOOT_COMMAND_MAGIC_VALUE;
+        excl_command->token = 0xdcdcdcdc;
+        excl_command->command_ID = 0x1;
+        excl_command->command_size = 0x01;
+        excl_command->pad0 = 0;
+        excl_command->transfer_length = 0;
+        excl_command->args[0] = 1; // TODO(gh) seems like we cannot get the exclusive access..?
+        macos_write_to_bulk_out_endpoint(macos_usb_interface, bulk_out_endpoint_index, excl_command, sizeof(PicoBootCommand)); 
+
+        u32 read_buffer[4] = {};
+        get_usb_command_status(macos_usb_interface, read_buffer);
+        assert((read_buffer[2] == 0x1) &&
+                (read_buffer[3] == 0));
+    }
+#endif
+
+    // TODO(gh) remove this malloc, or make a structure of picoboot command
+    u32 data_size = 32; // 256B is the minimum granularity, rp2040 will pad the data with 0 if it's smaller than 256B
+    u32 total_size = 1*sizeof(PicoBootCommand) + data_size;
+    u8 *commands = (u8 *)malloc(total_size); 
+#if 0
+
+
+    PicoBootCommand *write_command = (PicoBootCommand *)commands;
+    write_command->magic = PICOBOOT_COMMAND_MAGIC_VALUE;
+    write_command->token = 0xdcdcdcdc;
+    write_command->command_ID = 0x5;
+    write_command->command_size = 0x08;
+    write_command->pad0 = 0;
+    write_command->transfer_length = data_size;
+    write_command->args[0] = 0; // address
+    write_command->args[1] = data_size;
+
+    u8 *data = commands + sizeof(PicoBootCommand);
+    for(u32 i = 0;
+            i < data_size;
+            i++)
+    {
+        data[i] = i; // test only
+    }
+
+    IOReturn kr;
+    do
+    {
+        kr = (*macos_usb_interface)->WritePipeTO(macos_usb_interface, bulk_out_endpoint_index, commands, total_size, 10, 20);
+
+        if(kr != kIOReturnSuccess)
+        {
+            u32 read_buffer[4];
+            get_usb_command_status(macos_usb_interface, read_buffer);
+
+            if(kr == kIOUSBTransactionTimeout)
+            {
+                assert((*macos_usb_interface)->ClearPipeStallBothEnds(macos_usb_interface, bulk_in_endpoint_index) == kIOReturnSuccess);
+            }
+        }
+    } while(kr != kIOReturnSuccess);
+    // get_usb_command_status(macos_usb_interface, read_buffer);
+    // assert((read_buffer[2] == 0x5));
+#endif
+    void *test_output = malloc(data_size);
+    memset(test_output, ~0, data_size);
+    macos_read_from_bulk_in_endpoint(&usb_interface, 0, test_output, data_size);
+
+    // debug, print out the data that we read 
+    for(u32 i = 0;
+            i < data_size;
+            i++)
+    {
+        printf("%u ", *((u32 *)(test_output) + i));
+    }
+
+    memset(test_output, ~0, data_size);
+    macos_read_from_bulk_in_endpoint(&usb_interface, 0, test_output, data_size);
+
+    // debug, print out the data that we read 
+    for(u32 i = 0;
+            i < data_size;
+            i++)
+    {
+        printf("%u ", *((u32 *)(test_output) + i));
+    }
+}
+
+internal void
+raw_usb_device_removed(void *refCon, io_iterator_t io_iter)
+{
+    kern_return_t   kr;
+    io_service_t    object;
+ 
+    io_service_t usb_device_iter = IOIteratorNext(io_iter);
+    while (usb_device_iter)
+    {
+        // TODO(gh) this will fire for other usb devices too since we know that the matching dictionary doesn't work
+        if(IOObjectRelease(usb_device_iter) != kIOReturnSuccess)
+        {
+            // TODO(gh) log
+            printf("couldn’t release raw usb device object, possibly not our debug probe?\n");
+            continue;
+        }
+    }
+}
+
+// only iothread will be running this code. this is basically a CFRunLoop with
+// some IO events embedded
+internal void*
+macos_io_thread_proc(void *data)
+{
+    /*
+       This usb initialization sequence is from 
+       https://developer.apple.com/library/archive/documentation/DeviceDrivers/Conceptual/USBBook/USBDeviceInterfaces/USBDevInterfaces.html
+     */
+    // open a master port to talk to the IOKit
+    mach_port_t iokit_master_port;
+    kern_return_t kernel_return = IOMasterPort(MACH_PORT_NULL, &iokit_master_port);
+    assert((kernel_return == 0) && iokit_master_port);
+
+    // create a dictionary to the IOKit so that we can find the usb device that we want
+    CFMutableDictionaryRef usb_matching_dict = IOServiceMatching(kIOUSBDeviceClassName);
+    assert(usb_matching_dict);
+#if 0 // TODO(gh) this is not working, even though the same routine was being used in libusb / apple
+    i32 usb_vendor_ID = 0x2e8a; // rp2040
+    CFDictionarySetValue(usb_matching_dict, CFSTR(kUSBVendorID),
+                        CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &usb_vendor_ID));
+#endif
+
+    // open a notification port and add it to the CFRunLoop. IOKit will use this port to notify us 
+    // whenever there is a new device being connected or the states change
+    IONotificationPortRef notification_port = IONotificationPortCreate(iokit_master_port);
+    CFRunLoopSourceRef runloop_source = IONotificationPortGetRunLoopSource(notification_port);
+    CFRunLoopAddSource(CFRunLoopGetCurrent(), 
+                        runloop_source,
+                        kCFRunLoopDefaultMode);
+
+    // this is some obj-c crap I think, the explanation from them is : 
+    // "Retain additional dictionary references because each call to IOServiceAddMatchingNotification consumes one reference"
+    usb_matching_dict = (CFMutableDictionaryRef) CFRetain(usb_matching_dict);
+    usb_matching_dict = (CFMutableDictionaryRef) CFRetain(usb_matching_dict);
+    usb_matching_dict = (CFMutableDictionaryRef) CFRetain(usb_matching_dict);
+
+    // TODO(gh) remove this malloc..?
+    io_iterator_t *io_iters = (io_iterator_t *)malloc(4*sizeof(io_iterator_t));
+    io_iters[0] = 0;
+    io_iters[1] = 0;
+    io_iters[2] = 0;
+    io_iters[3] = 0;
+
+    // first connected
+    IOServiceAddMatchingNotification(notification_port,
+                                     kIOMatchedNotification, usb_matching_dict,
+                                     raw_usb_device_added, 0, io_iters + 0);
+    raw_usb_device_added(0, io_iters[0]); // debug probe might be already connected, so try to find it ourselves at least once
+
+    // disconnected
+    IOServiceAddMatchingNotification(notification_port,
+                    kIOTerminatedNotification, usb_matching_dict,
+                    raw_usb_device_removed, 0, io_iters + 1);
+    raw_usb_device_removed(0, io_iters[1]);
+
+    mach_port_deallocate(mach_task_self(), iokit_master_port);
+
+    CFRunLoopRun(); // infinite loop
+
+    return 0;
+}
+
 int main(void)
 { 
     //TODO : writefile?
@@ -393,11 +937,26 @@ int main(void)
             VM_FLAGS_ANYWHERE);
     platform_memory.transient_memory = (u8 *)platform_memory.permanent_memory + platform_memory.permanent_memory_size;
 
+    // create iothread and start running
+    pthread_attr_t  attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    pthread_t thread = 0; // for now, we don't care about storing this because this is a background thread which will be running until the user closes the debugger
+    if(pthread_create(&thread, &attr, &macos_io_thread_proc, 0) != 0)
+    {
+        assert(0);
+    }
+    pthread_attr_destroy(&attr);
+
+#if 0
+
+#endif
 
     // load ftdi library
     void *ftdi_library = dlopen("../lib/libftd2xx.1.4.24.dylib", RTLD_LAZY|RTLD_GLOBAL);
     FTDIApi ftdi_api = {};
-    if(ftdi_library)
+    // if(ftdi_library)
+    if(0)
     {
         // get all the necessary function pointers. some of these will be passed onto the 
         // application level so that the debugger can send the necessary jtag signals
@@ -469,39 +1028,33 @@ int main(void)
            Initializing ARM ADI
            There are three power domains in the ADI.
            1. Always on power domain - DP registers
-           2. Debug power domain - required for debugging
+           2. Debug power domain - probably the Debug APB? If so, why does
            3. System power domain
 
-            we shoud power on the debug & system power domains
-            to read from the AP
+           Powering up either the debug domain or the system domain 
+           will allow the APB multiplexor to get the input from each end(CoreSight Components TRM 2.11.2).
+
+           DP is the master of the internal bus(DAPBUS) that connects DP with all the other APs.
+           All the APs are the slave of the DP.
+           Both the APB-AP & system can be the master of the Debug APB(this is a bus). 
+           This is done with the APB Mux. APB-AP always take priority when it comes down to who has access to the DEBUG APB.
+
+           Both the DP and AP are run based on the DAPCLK, which should be equivalent to PCLKDBG(DEBUG APB Clock)
+           APB-Mux will take both the PCLKDBG(Drives all logic, except for the System Slave port interface) & PCLKSYS(Drives the System Slave port interface)
+
+Question : 
+
+            only power up the debug domain and see if we can read the AP registers
+            if that's possible, only power up the debug domain and see if we can read the memory
+            1. Mux arbitration?
+            2. why does the system need to access debug APB? - debug monitor(Corsight architecture spec v2 D2.4.1)
+            3. Debug domain == Debug APB? Where are the APB registers?
+            4. master vs slave
+            5. bus vs bridge
          */
         push_DPACC_write(&jtag_command_buffer, ((1 << 30) | (1 << 28)), A_CTRL_STAT);
-        flush_jtag_command_buffer(&jtag_command_buffer, &ftdi_api);
+        pop_jtag_command_buffer(&jtag_command_buffer, &ftdi_api);
         ftdi_receive_queue_should_be_empty(&ftdi_api);
-
-#if 0
-        // TODO(gh) reset the debug + system domain at initialization
-        {
-            u8 arm_init_commands[] = 
-            {
-                goto_reset,
-                goto_shift_ir_from_reset,
-                shift_in_4bits_and_exit(IR_DPACC),
-                goto_shift_dr_from_exit_ir,
-
-                // power on the debug & system power domain
-                // by writing to bits 28 & 30
-                shift_in_35bits_and_exit(DPACC_write, 0x4, ((1 << 30) | (1 << 28))),
-                goto_reset,
-            };
-
-            ftdi_write(&ftdi_api, arm_init_commands, array_count(arm_init_commands));
-            ftdi_receive_queue_should_be_empty(&ftdi_api);
-        }
-#endif
-
-        // read & write the same register 1000 times to see if we'll ever get the wait bit set
-        
 
         // bunch of test routines
         // push_test_IDCODE(&jtag_command_buffer);
@@ -511,7 +1064,7 @@ int main(void)
         push_DPACC_read(&jtag_command_buffer, 0x4, 0x4); // test dpv0 vs dpv1
         push_move_state_machine(&jtag_command_buffer, RESET);
         // push_DPACC_read(&jtag_command_buffer, 0x4);
-        flush_jtag_command_buffer(&jtag_command_buffer, &ftdi_api);
+        pop_jtag_command_buffer(&jtag_command_buffer, &ftdi_api);
         
     } // if(ftdi_library)
 
@@ -575,6 +1128,8 @@ int main(void)
 
     [app activate];
     [app run];
+
+    // CFRunLoopRun();
 
     is_running = true;
 #if 1

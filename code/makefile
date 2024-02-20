@@ -7,7 +7,7 @@ MACOS_BUILD_PATH = ../build
 MACOS_APP_NAME = rpi_debugger.app
 MACOS_EXE_PATH = $(MACOS_BUILD_PATH)/$(MACOS_APP_NAME)/Contents/MacOS
 MACOS_RESOURCE_PATH = $(MACOS_BUILD_PATH)/$(MACOS_APP_NAME)/Contents/Resources
-MACOS_FRAMEWORK = -framework Cocoa -framework CoreFoundation -framework CoreGraphics -framework CoreVideo -framework Metal -framework MetalKit -framework MetalPerformanceShaders 
+MACOS_FRAMEWORK = -framework Cocoa -framework CoreFoundation -framework CoreGraphics -framework CoreVideo -framework IOKit -framework Metal -framework MetalKit -framework MetalPerformanceShaders 
 
 # -O0 = unoptimized, -O2 = compiler optimized
 COMPILER_FLAGS = -g -Wall -O0 -pthread -D RPID_DEBUG=1 -D RPID_SLOW=1 -D RPID_ARM=1 -D RPID_X86_X64=0 -D RPID_LLVM=1 -D RPID_MSVC=0 -D RPID_MACOS=1 -D RPID_LINUX=0 -D RPID_VULKAN=0 -D RPID_METAL=1

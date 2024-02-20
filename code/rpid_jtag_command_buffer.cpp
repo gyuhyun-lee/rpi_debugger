@@ -6,10 +6,16 @@
 
 // execute all commands inside the buffer while retaining the current state
 internal void
-flush_jtag_command_buffer(JTAGCommandBuffer *cb, FTDIApi *ftdi_api)
+pop_jtag_command_buffer(JTAGCommandBuffer *cb, FTDIApi *ftdi_api)
 {
     ftdi_write(ftdi_api, cb->base, cb->used);
     cb->used = 0;
+}
+
+// TODO(gh) read back from the receive FIFO
+internal void
+read_back_jtag_command_buffer()
+{
 }
 
 internal void
@@ -55,6 +61,8 @@ initialize_jtag_command_buffer(JTAGCommandBuffer *cb, u8 *base, u32 size)
     cb->base[cb->used++] = FTDI_COMMAND_MOVE_STM;
     cb->base[cb->used++] = 5-1;
     cb->base[cb->used++] = 0b11111;
+
+    // TODO(gh) reset SELECT register & IR  too
 }
 
 internal void
@@ -209,7 +217,7 @@ push_DPACC_write(JTAGCommandBuffer *cb, u32 data, u32 A, u32 DPBANKSEL = 0)
 {
     push_update_IR4(cb, IR_DPACC);
 
-    if(A != 0x8)
+    if(A != A_SELECT)
     {
         // for DPv1 & 2, check whether we should update the DPBANKSEL
         if((cb->current_SELECT & 0xf) != DPBANKSEL)
@@ -244,8 +252,8 @@ push_DPACC_write(JTAGCommandBuffer *cb, u32 data, u32 A, u32 DPBANKSEL = 0)
     }
     else
     {
-        // thsi function was trying to update SELECT,
-        // so we should update the 'data' with new DPBANKSEL
+        // this function was trying to update SELECT anyway
+        // so just should update the 'data' with new DPBANKSEL
         data &= ~(0xf);
         data |= DPBANKSEL;
     }
