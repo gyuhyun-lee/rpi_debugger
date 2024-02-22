@@ -37,6 +37,9 @@ Thumbs.db
 *.map
 *.rdbg
 *.swn
+*.disasm
+*.bin
+*.elf
 
 # metal generated files
 *.air

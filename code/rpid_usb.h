@@ -12,7 +12,11 @@ struct PicoBootCommand // all commands are 32 bytes, should be cleared to 0 befo
     u8 command_size;// Number of bytes of valid data in the args field
     u16 pad0; // 0x0000
     u32 transfer_length; // The number of bytes the host expects to send or receive over the bulk channel
-    u32 args[4]; // 16 bytes of command specific data padded with zeros
+    // 16 bytes of command specific data padded with zeros
+    u32 args0;
+    u32 args1;
+    u32 args2;
+    u32 args3;
 };
 #pragma pack(pop)
 
