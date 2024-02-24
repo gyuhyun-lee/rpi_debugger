@@ -17,8 +17,8 @@ clean:
 	rm -f *.disasm
 
 main : rp2040_main.s
-	arm-none-eabi-as $(ASSEMBLER_FLAGS) rp2040_main.s -o main.elf
+	arm-none-eabi-as $(ASSEMBLER_FLAGS) rp2040_main.s -o rp2040_main.elf
 
-notmain.bin : main.elf
-	arm-none-eabi-objcopy -O binary main.elf main.bin
-	arm-none-eabi-objdump $(DISASM_FLAGS) -D main.elf > main.disasm
+notmain.bin : rp2040_main.elf
+	arm-none-eabi-objcopy -O binary rp2040_main.elf rp2040_main.bin
+	arm-none-eabi-objdump $(DISASM_FLAGS) -D rp2040_main.elf > rp2040_main.disasm

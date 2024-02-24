@@ -95,6 +95,11 @@ PLATFORM_READ_FILE(debug_macos_read_file)
 
         close(File);
     }
+    else
+    {
+        // TODO(gh) log, file doesn't exist
+        assert(0);
+    }
 
     return result;
 }
@@ -708,6 +713,16 @@ raw_usb_device_added(void *refCon, io_iterator_t io_iter)
         }
     } // if(usb_interface.macos_usb_interface)
 
+    IOUSBInterfaceInterface **macos_usb_interface = usb_interface.macos_usb_interface;
+
+    // clear any stall/halt bits from every endpoints
+    // this also synchronizes bit toggle(usbspec 1.1 )
+    assert((*usb_interface.macos_usb_interface)->AbortPipe(usb_interface.macos_usb_interface, usb_interface.bulk_in_endpoint_index) == kIOReturnSuccess);
+    assert((*usb_interface.macos_usb_interface)->ClearPipeStallBothEnds(usb_interface.macos_usb_interface, usb_interface.bulk_in_endpoint_index) == kIOReturnSuccess);
+
+    assert((*usb_interface.macos_usb_interface)->AbortPipe(usb_interface.macos_usb_interface, usb_interface.bulk_out_endpoint_index) == kIOReturnSuccess);
+    assert((*usb_interface.macos_usb_interface)->ClearPipeStallBothEnds(usb_interface.macos_usb_interface, usb_interface.bulk_out_endpoint_index) == kIOReturnSuccess);
+
     // create async event source
 
 #if 0
@@ -749,6 +764,7 @@ raw_usb_device_added(void *refCon, io_iterator_t io_iter)
     }
 #endif
 
+#if 0
     // reset the pipe using the control pipeline,
     // here we cannot use WritePipe and should use ControlRequest
     {
@@ -761,37 +777,107 @@ raw_usb_device_added(void *refCon, io_iterator_t io_iter)
 
         IOReturn kr = (*usb_interface.macos_usb_interface)->ControlRequest(usb_interface.macos_usb_interface, 0, setup_packet);
         assert(kr == kIOReturnSuccess);
-    }
 
-#if 1
+    }
+#endif
+
+#if 0
     // get exclusive access
     {
-        PicoBootCommand *excl_command = (PicoBootCommand *)malloc(sizeof(PicoBootCommand));
-        excl_command->magic = PICOBOOT_COMMAND_MAGIC_VALUE;
-        excl_command->token = 0xdcdcdcdc;
-        excl_command->command_ID = 0x1;
-        excl_command->command_size = 0x01;
-        excl_command->pad0 = 0;
-        excl_command->transfer_length = 0;
-        excl_command->args0 = 2; 
-        excl_command->args1 = 0; 
-        excl_command->args2 = 0; 
-        excl_command->args3 = 0; 
-        macos_write_to_bulk_out_endpoint(&usb_interface, excl_command, sizeof(PicoBootCommand)); 
+        PicoBootCommand excl_command = {};
+        excl_command.magic = PICOBOOT_COMMAND_MAGIC_VALUE;
+        excl_command.token = 0xdccccc;
+        excl_command.command_ID = 0x1;
+        excl_command.command_size = 0x01;
+        excl_command.pad0 = 0;
+        excl_command.transfer_length = 0;
+        excl_command.args0 = 2;
+        excl_command.args1 = 0; 
+        excl_command.args2 = 0; 
+        excl_command.args3 = 0; 
+        macos_write_to_bulk_out_endpoint(&usb_interface, &excl_command, sizeof(PicoBootCommand)); 
+        macos_wait_for_command_complete(&usb_interface);
+
+        macos_bulk_transfer_in_zero(&usb_interface); // end the command sequence
+
+        int a = 1;
     }
-    sleep(1);
 #endif
 
 #if 1
-    // clear any stall/halt bits from every endpoints
-    // this also synchronizes bit toggle(usbspec 1.1 )
-    // assert((*usb_interface.macos_usb_interface)->AbortPipe(usb_interface.macos_usb_interface, usb_interface.bulk_in_endpoint_index) == kIOReturnSuccess);
-    assert((*usb_interface.macos_usb_interface)->ClearPipeStallBothEnds(usb_interface.macos_usb_interface, usb_interface.bulk_in_endpoint_index) == kIOReturnSuccess);
 
-    // assert((*usb_interface.macos_usb_interface)->AbortPipe(usb_interface.macos_usb_interface, usb_interface.bulk_out_endpoint_index) == kIOReturnSuccess);
-    assert((*usb_interface.macos_usb_interface)->ClearPipeStallBothEnds(usb_interface.macos_usb_interface, usb_interface.bulk_out_endpoint_index) == kIOReturnSuccess);
 #endif
 
+    sleep(1);
+
+    char base_path[256];
+    memset(base_path, 0, 256); // zero-memory
+    macos_get_base_path(base_path);
+
+    char bin_path[256];
+    memset(bin_path, 0, 256); // TODO(gh) zero-memory
+    unsafe_string_append(bin_path, base_path);
+    // unsafe_string_append(bin_path, "code/rp2040/rp2040_main.bin");
+    unsafe_string_append(bin_path, "code/rp2040/notmain.bin");
+
+    PlatformReadFileResult bin_file = debug_macos_read_file(bin_path);
+
+    // write the code to ram
+#if 1
+    PicoBootCommand write_command = {};
+    write_command.magic = PICOBOOT_COMMAND_MAGIC_VALUE;
+    write_command.token = 0x1111;
+    write_command.command_ID = 0x5;
+    write_command.command_size = 0x08;
+    write_command.pad0 = 0;
+    write_command.transfer_length = bin_file.size;
+    write_command.args0 = 0x20000000; // address
+    write_command.args1 = bin_file.size;
+    write_command.args2 = 0;
+    write_command.args3 = 0;
+
+    macos_bulk_transfer_out(&usb_interface, &write_command, sizeof(PicoBootCommand)); // write out the command
+    // macos_wait_for_command_complete(&usb_interface);
+    macos_bulk_transfer_out(&usb_interface, bin_file.memory, bin_file.size); // write out the data bytes
+    macos_wait_for_command_complete(&usb_interface);
+    macos_bulk_transfer_in_zero(&usb_interface);
+
+    // debug, testing whether I get the same bytes that I wrote
+    void *read_buffer = malloc(bin_file.size);
+    macos_read_from_rp2040(&usb_interface, 0x20000000, read_buffer, bin_file.size);
+    macos_wait_for_command_complete(&usb_interface);
+    for(u32 i = 0;
+            i < bin_file.size;
+            i++)
+    {
+        u8 read = *((u8 *)read_buffer + i);
+        u8 file = *((u8 *)bin_file.memory + i);
+
+        if(read != file)
+        {
+            assert(0);
+        }
+    }
+#endif
+
+    // move the PC and reboot RP2040
+    PicoBootCommand reboot_command = {};
+    reboot_command.magic = PICOBOOT_COMMAND_MAGIC_VALUE;
+    reboot_command.token = 0x1234;
+    reboot_command.command_ID = 0x2;
+    reboot_command.command_size = 0x0c;
+    reboot_command.pad0 = 0;
+    reboot_command.transfer_length = 0;
+    reboot_command.args0 = 0x20000000; // PC
+    reboot_command.args1 = 0x20004000; // SP
+    //reboot_command.args0 = 0; // PC
+    //reboot_command.args1 = 0; // SP
+    reboot_command.args2 = 10;
+    reboot_command.args3 = 0;
+    macos_bulk_transfer_out(&usb_interface, &reboot_command, sizeof(PicoBootCommand)); // write out the command
+    macos_bulk_transfer_in_zero(&usb_interface);
+
+#if 0
     u32 data_size = 256; // 256B is the minimum granularity, rp2040 will pad the data with 0 if it's smaller than 256B
     void *test_output = malloc(data_size);
     for(u32 iter = 0;
@@ -830,6 +916,7 @@ raw_usb_device_added(void *refCon, io_iterator_t io_iter)
 
         // sleep(1);
     }
+#endif
 
     int a00 = 1;
 }

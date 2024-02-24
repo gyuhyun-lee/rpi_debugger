@@ -1,24 +1,27 @@
 #include "rpid_usb.h"
 
-// returns 16-byte command status from the interface
+// returns 16-byte command status from the PICOBOOT interface
 internal void
 macos_get_usb_command_status(RP2040USBInterface *usb_interface, u32 *read_buffer)
 {
     IOUSBInterfaceInterface **macos_usb_interface = usb_interface->macos_usb_interface;
-    IOUSBDevRequest command_packet = {};
+    IOUSBDevRequestTO command_packet = {};
     command_packet.bmRequestType = 0b11000001; // request status from USB interface
     command_packet.bRequest = 0x42;
     command_packet.wValue = 0;
     command_packet.wIndex = 1; // in this case, index of the interface
-    command_packet.wLength = 0; // always 16 bytes
+    command_packet.wLength = 16; // always 16 bytes
     command_packet.pData = (void *)read_buffer;
+    command_packet.noDataTimeout = 300;
+    command_packet.completionTimeout = 500;
 
-    IOReturn r = (*macos_usb_interface)->ControlRequest(macos_usb_interface, 0, &command_packet);
+    IOReturn r = (*macos_usb_interface)->ControlRequestTO(macos_usb_interface, 0, &command_packet);
     assert(r == kIOReturnSuccess);
+    assert(command_packet.wLenDone == 16);
 }
 
 internal b32
-macos_write_to_bulk_out_endpoint(RP2040USBInterface *usb_interface, void *buffer, u32 byte_count)
+macos_bulk_transfer_out(RP2040USBInterface *usb_interface, void *buffer, u32 byte_count)
 {
     b32 result = false;
     IOUSBInterfaceInterface **macos_usb_interface = usb_interface->macos_usb_interface;
@@ -26,10 +29,25 @@ macos_write_to_bulk_out_endpoint(RP2040USBInterface *usb_interface, void *buffer
     u64 start_ns = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
     while(!result)
     {
-        if((*macos_usb_interface)->WritePipeTO(macos_usb_interface, usb_interface->bulk_out_endpoint_index, buffer, byte_count, 10, 20) == kIOReturnSuccess)
+        IOReturn kr = (*macos_usb_interface)->WritePipeTO(macos_usb_interface, usb_interface->bulk_out_endpoint_index, buffer, byte_count, 100, 200);
+
+#if 0
+        assert((*usb_interface->macos_usb_interface)->AbortPipe(usb_interface->macos_usb_interface, usb_interface->bulk_out_endpoint_index) == kIOReturnSuccess);
+        assert((*usb_interface->macos_usb_interface)->ClearPipeStallBothEnds(usb_interface->macos_usb_interface, usb_interface->bulk_out_endpoint_index) == kIOReturnSuccess);
+
+        kr = (*macos_usb_interface)->WritePipeTO(macos_usb_interface, usb_interface->bulk_out_endpoint_index, buffer, byte_count, 10, 20);
+#endif
+
+        if(kr == kIOReturnSuccess)
         {
             result = true;
             break;
+        }
+        else
+        {
+            u32 read_buffer[4];
+            macos_get_usb_command_status(usb_interface, read_buffer);
+            int a = 1;
         }
 
         u64 end_ns = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
@@ -46,8 +64,41 @@ macos_write_to_bulk_out_endpoint(RP2040USBInterface *usb_interface, void *buffer
     return result;
 }
 
+// mostly used to let the RP2040 know that the write has been finished
+internal void
+macos_bulk_transfer_in_zero(RP2040USBInterface *usb_interface)
+{
+    u8 read_buffer[0];
+    u32 bytes_read = 1;
+    IOReturn kr = (*usb_interface->macos_usb_interface)->ReadPipeTO(usb_interface->macos_usb_interface, usb_interface->bulk_in_endpoint_index, read_buffer, &bytes_read, 10, 10);
+    assert(bytes_read == 0);
+}
+
+internal void
+macos_bulk_transfer_out_zero(RP2040USBInterface *usb_interface)
+{
+    u8 write_buffer[0];
+    IOReturn kr = (*usb_interface->macos_usb_interface)->WritePipeTO(usb_interface->macos_usb_interface, usb_interface->bulk_out_endpoint_index, write_buffer, 1, 100, 200);
+}
+
+internal void
+macos_wait_for_command_complete(RP2040USBInterface *usb_interface)
+{
+    do
+    {
+        u32 read_buffer[4] = {};
+        macos_get_usb_command_status(usb_interface, read_buffer);
+        
+        if((read_buffer[1] == 0) && 
+            ((read_buffer[2] >> 8) == 0))
+        {
+            break;
+        }
+    } while(1);
+}
+
 internal b32
-macos_read_from_bulk_in_endpoint(RP2040USBInterface *usb_interface, u32 address, void *read_buffer, u32 bytes_to_read, u32 token = 0xdcdcdcdc)
+macos_read_from_rp2040(RP2040USBInterface *usb_interface, u32 address, void *read_buffer, u32 bytes_to_read, u32 token = 0xdcdcdcdc)
 {
     b32 result = false;
 
@@ -68,7 +119,7 @@ macos_read_from_bulk_in_endpoint(RP2040USBInterface *usb_interface, u32 address,
         read_command.args3 = 0;
         // assert(sizeof(PicoBootCommand) == 32);
 
-        if(macos_write_to_bulk_out_endpoint(usb_interface, &read_command, sizeof(PicoBootCommand)))
+        if(macos_bulk_transfer_out(usb_interface, &read_command, sizeof(PicoBootCommand)))
         {
             IOUSBInterfaceInterface **macos_usb_interface = usb_interface->macos_usb_interface;
             u32 bytes_read = bytes_to_read;
@@ -91,6 +142,8 @@ macos_read_from_bulk_in_endpoint(RP2040USBInterface *usb_interface, u32 address,
             break;
         }
     }
+
+    macos_bulk_transfer_out_zero(usb_interface); // finish the command sequence
 
     return result;
 }

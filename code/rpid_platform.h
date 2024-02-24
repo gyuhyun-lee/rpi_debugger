@@ -12,7 +12,7 @@ extern "C" {
 struct PlatformReadFileResult
 {
     u8 *memory;
-    u64 size; // TOOD/gh : make this to be at least 64bit
+    u32 size; // TOOD(gh) : make this to be at least 64bit
 };
 
 #define PLATFORM_GET_FILE_SIZE(name) u64 (name)(const char *filename)
