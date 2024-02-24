@@ -817,8 +817,8 @@ raw_usb_device_added(void *refCon, io_iterator_t io_iter)
     char bin_path[256];
     memset(bin_path, 0, 256); // TODO(gh) zero-memory
     unsafe_string_append(bin_path, base_path);
-    // unsafe_string_append(bin_path, "code/rp2040/rp2040_main.bin");
-    unsafe_string_append(bin_path, "code/rp2040/notmain.bin");
+    unsafe_string_append(bin_path, "code/rp2040/rp2040_main.bin");
+    // unsafe_string_append(bin_path, "code/rp2040/notmain.bin");
 
     PlatformReadFileResult bin_file = debug_macos_read_file(bin_path);
 

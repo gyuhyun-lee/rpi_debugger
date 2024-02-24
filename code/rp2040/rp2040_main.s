@@ -21,7 +21,7 @@
 // main entry point
 start:
     mov r0, #1
-    lsl r0, r0, #25 // GPIO 25 bit
+    lsl r0, r0, #5 // IO Bank0
 
     ldr r2, =RESETS_RESET_CLR // RESETS_RESET_CLR
 
@@ -33,8 +33,11 @@ start:
     ldr r2, =RESETS_RESET_DONE_RW
 wait_until_reset_is_undone : 
     ldr r1, [r2]
-    tst r1, r0 // & two registers and set the flags
-    bne wait_reset_clear
+    tst r1, r0 // & two registers, set the flags
+    beq wait_until_reset_is_undone // compare weith 0
+
+    mov r0, #1
+    lsl r0, r0, #25 // GPIO 25 bit
 
 turn_off_gpio_25 :
     ldr r2, =SIO_GPIO_OE_CLR
@@ -56,7 +59,7 @@ turn_back_on_gipo_25 :
     ldr r2, =SIO_GPIO_OUT_SET
     ldr r3, =SIO_GPIO_OUT_CLR
     mov r4, #1 // iter
-    lsl r4, r4, #18
+    lsl r4, r4, #14
 
 loop_led_on : 
     str r0, [r2] // set GPIO 25
