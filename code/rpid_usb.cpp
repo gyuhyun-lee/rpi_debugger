@@ -31,13 +31,6 @@ macos_bulk_transfer_out(RP2040USBInterface *usb_interface, void *buffer, u32 byt
     {
         IOReturn kr = (*macos_usb_interface)->WritePipeTO(macos_usb_interface, usb_interface->bulk_out_endpoint_index, buffer, byte_count, 100, 200);
 
-#if 0
-        assert((*usb_interface->macos_usb_interface)->AbortPipe(usb_interface->macos_usb_interface, usb_interface->bulk_out_endpoint_index) == kIOReturnSuccess);
-        assert((*usb_interface->macos_usb_interface)->ClearPipeStallBothEnds(usb_interface->macos_usb_interface, usb_interface->bulk_out_endpoint_index) == kIOReturnSuccess);
-
-        kr = (*macos_usb_interface)->WritePipeTO(macos_usb_interface, usb_interface->bulk_out_endpoint_index, buffer, byte_count, 10, 20);
-#endif
-
         if(kr == kIOReturnSuccess)
         {
             result = true;
@@ -47,7 +40,9 @@ macos_bulk_transfer_out(RP2040USBInterface *usb_interface, void *buffer, u32 byt
         {
             u32 read_buffer[4];
             macos_get_usb_command_status(usb_interface, read_buffer);
-            int a = 1;
+
+            // TODO(gh) log, clear the pipe and retry
+            assert(0);
         }
 
         u64 end_ns = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
@@ -63,6 +58,7 @@ macos_bulk_transfer_out(RP2040USBInterface *usb_interface, void *buffer, u32 byt
 
     return result;
 }
+
 
 // mostly used to let the RP2040 know that the write has been finished
 internal void
@@ -146,6 +142,27 @@ macos_read_from_rp2040(RP2040USBInterface *usb_interface, u32 address, void *rea
     macos_bulk_transfer_out_zero(usb_interface); // finish the command sequence
 
     return result;
+}
+
+internal void
+macos_write_to_rp2040(RP2040USBInterface *usb_interface, u32 address, void *write_buffer, u32 bytes_to_write, u32 token = 0xcdcdcdcd)
+{
+    PicoBootCommand write_command = {};
+    write_command.magic = PICOBOOT_COMMAND_MAGIC_VALUE;
+    write_command.token = token;
+    write_command.command_ID = 0x5;
+    write_command.command_size = 0x08;
+    write_command.pad0 = 0;
+    write_command.transfer_length = bytes_to_write;
+    write_command.args0 = address;
+    write_command.args1 = bytes_to_write;
+    write_command.args2 = 0;
+    write_command.args3 = 0;
+
+    macos_bulk_transfer_out(usb_interface, &write_command, sizeof(PicoBootCommand)); // write out the command
+    macos_bulk_transfer_out(usb_interface, write_buffer, bytes_to_write); // write out the data bytes
+    macos_wait_for_command_complete(usb_interface);
+    macos_bulk_transfer_in_zero(usb_interface); // end the command sequence
 }
 
 

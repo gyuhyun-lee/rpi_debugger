@@ -724,7 +724,6 @@ raw_usb_device_added(void *refCon, io_iterator_t io_iter)
     assert((*usb_interface.macos_usb_interface)->ClearPipeStallBothEnds(usb_interface.macos_usb_interface, usb_interface.bulk_out_endpoint_index) == kIOReturnSuccess);
 
     // create async event source
-
 #if 0
     CFRunLoopSourceRef async_event_source;
     if((*usb_interface.macos_usb_interface)->CreateInterfaceAsyncEventSource(usb_interface.macos_usb_interface, &async_event_source) == kIOReturnSuccess)
@@ -742,29 +741,7 @@ raw_usb_device_added(void *refCon, io_iterator_t io_iter)
     }
 #endif
 
-#if 0
-    // reboot
-    {
-        PicoBootCommand *reboot_command = (PicoBootCommand *)malloc(sizeof(PicoBootCommand));
-        reboot_command->magic = PICOBOOT_COMMAND_MAGIC_VALUE;
-        reboot_command->token = 0xdcdcdcdc;
-        reboot_command->command_ID = 0x2;
-        reboot_command->command_size = 0x0c;
-        reboot_command->pad0 = 0;
-        reboot_command->transfer_length = 0;
-        reboot_command->args[0] = 0; 
-        reboot_command->args[1] = 0; 
-        reboot_command->args[2] = 0; 
-
-        IOReturn kr = (*macos_usb_interface)->WritePipe(macos_usb_interface, bulk_out_endpoint_index, reboot_command, sizeof(PicoBootCommand));
-        assert(kr == kIOReturnSuccess);
-
-        u32 read_buffer[4] = {};
-        macos_get_usb_command_status(macos_usb_interface, read_buffer);
-    }
-#endif
-
-#if 0
+#if 1
     // reset the pipe using the control pipeline,
     // here we cannot use WritePipe and should use ControlRequest
     {
@@ -802,49 +779,145 @@ raw_usb_device_added(void *refCon, io_iterator_t io_iter)
 
         int a = 1;
     }
-#endif
-
-#if 1
-
-#endif
-
     sleep(1);
+#endif
 
     char base_path[256];
-    memset(base_path, 0, 256); // zero-memory
+    memset(base_path, 0, 256); 
     macos_get_base_path(base_path);
+
+    char pio_bin_path[256];
+    memset(pio_bin_path, 0, 256);
+    unsafe_string_append(pio_bin_path, base_path);
+    unsafe_string_append(pio_bin_path, "code/rp2040/pio0.bin");
+    PlatformReadFileResult pio0_bin_file = debug_macos_read_file(pio_bin_path);
+    assert(pio0_bin_file.size <= 32*5); // each instruction is 5 bytes in hex file, who knows why...
+
+    // TODO(gh) this is so bad... is there a way to output the pioasm as a binary file?
+    u32 pio0_instruction_count = pio0_bin_file.size / 5;
+    u16 pio0_instructions[32]; // always write 64 bytes, padded with 0 
+    memset(pio0_instructions, 0, 2*32);
+    for(u32 i = 0;
+            i < pio0_instruction_count;
+            i++)
+    {
+        u8 *instruction = (u8 *)pio0_bin_file.memory + 5*i;
+        u16 h0 = (u16)*(instruction + 0);
+        u16 h1 = (u16)*(instruction + 1);
+        u16 h2 = (u16)*(instruction + 2);
+        u16 h3 = (u16)*(instruction + 3);
+
+        if((h0 >= 0x61) && (h0 <= 0x66))
+        {
+            h0 -= 87;
+        }
+        else if((h0 >= 0x41) && (h0 <= 0x46))
+        {
+            h0 -= 65;
+        }
+        else if((h0 >= 0x30) && (h0 <= 0x39))
+        {
+            h0 -= 48;
+        }
+        else
+        {
+            assert(0);
+        }
+
+        if((h1 >= 0x61) && (h1 <= 0x66))
+        {
+            h1 -= 87;
+        }
+        else if((h1 >= 0x41) && (h1 <= 0x46))
+        {
+            h1 -= 65;
+        }
+        else if((h1 >= 0x30) && (h1 <= 0x39))
+        {
+            h1 -= 48;
+        }
+        else
+        {
+            assert(0);
+        }
+        
+        if((h2 >= 0x61) && (h2 <= 0x66))
+        {
+            h2 -= 87;
+        }
+        else if((h2 >= 0x41) && (h2 <= 0x46))
+        {
+            h2 -= 65;
+        }
+        else if((h2 >= 0x30) && (h2 <= 0x39))
+        {
+            h2 -= 48;
+        }
+        else
+        {
+            assert(0);
+        }
+        
+        if((h3 >= 0x61) && (h3 <= 0x66))
+        {
+            h3 -= 87;
+        }
+        else if((h3 >= 0x41) && (h3 <= 0x46))
+        {
+            h3 -= 65;
+        }
+        else if((h3 >= 0x30) && (h3 <= 0x39))
+        {
+            h3 -= 48;
+        }
+        else
+        {
+            assert(0);
+        }
+
+        // even worse, h0 - h3 is in backwards...
+        pio0_instructions[i] = (h0 << 12) |
+                               (h1 << 8) | 
+                               (h2 << 4) | 
+                               (h3 << 0);
+    }
+
+#if 1
+    u32 pio0_instruction_address = 0x20040000;
+    macos_write_to_rp2040(&usb_interface, pio0_instruction_address, pio0_instructions, 32*2);
+    {
+        void *read_buffer = malloc(32*2);
+        macos_read_from_rp2040(&usb_interface, pio0_instruction_address, read_buffer, 32*2);
+        macos_wait_for_command_complete(&usb_interface);
+        for(u32 i = 0;
+                i < 32;
+                i++)
+        {
+            u16 read = *((u16 *)read_buffer + i);
+
+            if(read != pio0_instructions[i])
+            {
+                assert(0);
+            }
+        }
+    }
+#endif
 
     char bin_path[256];
     memset(bin_path, 0, 256); // TODO(gh) zero-memory
     unsafe_string_append(bin_path, base_path);
     unsafe_string_append(bin_path, "code/rp2040/rp2040_main.bin");
     // unsafe_string_append(bin_path, "code/rp2040/notmain.bin");
-
     PlatformReadFileResult bin_file = debug_macos_read_file(bin_path);
 
-    // write the code to ram
-#if 1
-    PicoBootCommand write_command = {};
-    write_command.magic = PICOBOOT_COMMAND_MAGIC_VALUE;
-    write_command.token = 0x1111;
-    write_command.command_ID = 0x5;
-    write_command.command_size = 0x08;
-    write_command.pad0 = 0;
-    write_command.transfer_length = bin_file.size;
-    write_command.args0 = 0x20000000; // address
-    write_command.args1 = bin_file.size;
-    write_command.args2 = 0;
-    write_command.args3 = 0;
+    u32 core0_instruction_address = 0x20000000;
 
-    macos_bulk_transfer_out(&usb_interface, &write_command, sizeof(PicoBootCommand)); // write out the command
-    // macos_wait_for_command_complete(&usb_interface);
-    macos_bulk_transfer_out(&usb_interface, bin_file.memory, bin_file.size); // write out the data bytes
-    macos_wait_for_command_complete(&usb_interface);
-    macos_bulk_transfer_in_zero(&usb_interface);
+    // write the code to ram
+    macos_write_to_rp2040(&usb_interface, core0_instruction_address, bin_file.memory, bin_file.size);
 
     // debug, testing whether I get the same bytes that I wrote
     void *read_buffer = malloc(bin_file.size);
-    macos_read_from_rp2040(&usb_interface, 0x20000000, read_buffer, bin_file.size);
+    macos_read_from_rp2040(&usb_interface, core0_instruction_address, read_buffer, bin_file.size);
     macos_wait_for_command_complete(&usb_interface);
     for(u32 i = 0;
             i < bin_file.size;
@@ -858,7 +931,6 @@ raw_usb_device_added(void *refCon, io_iterator_t io_iter)
             assert(0);
         }
     }
-#endif
 
     // move the PC and reboot RP2040
     PicoBootCommand reboot_command = {};
@@ -868,7 +940,7 @@ raw_usb_device_added(void *refCon, io_iterator_t io_iter)
     reboot_command.command_size = 0x0c;
     reboot_command.pad0 = 0;
     reboot_command.transfer_length = 0;
-    reboot_command.args0 = 0x20000000; // PC
+    reboot_command.args0 = core0_instruction_address; // PC
     reboot_command.args1 = 0x20004000; // SP
     //reboot_command.args0 = 0; // PC
     //reboot_command.args1 = 0; // SP
@@ -931,6 +1003,7 @@ raw_usb_device_removed(void *refCon, io_iterator_t io_iter)
     while (usb_device_iter)
     {
         // TODO(gh) this will fire for other usb devices too since we know that the matching dictionary doesn't work
+        // this will also fire if the rp2040 reboots and starts executing the code instead of going into a usb boot mode
         if(IOObjectRelease(usb_device_iter) != kIOReturnSuccess)
         {
             // TODO(gh) log
