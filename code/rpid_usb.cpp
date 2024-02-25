@@ -139,6 +139,7 @@ macos_read_from_rp2040(RP2040USBInterface *usb_interface, u32 address, void *rea
         }
     }
 
+    macos_wait_for_command_complete(usb_interface);
     macos_bulk_transfer_out_zero(usb_interface); // finish the command sequence
 
     return result;
@@ -163,6 +164,21 @@ macos_write_to_rp2040(RP2040USBInterface *usb_interface, u32 address, void *writ
     macos_bulk_transfer_out(usb_interface, write_buffer, bytes_to_write); // write out the data bytes
     macos_wait_for_command_complete(usb_interface);
     macos_bulk_transfer_in_zero(usb_interface); // end the command sequence
+}
+
+internal void
+macos_verify_write_to_rp2040(RP2040USBInterface *usb_interface, u32 address, void *buffer_to_compare, u32 size)
+{
+    TempMemory temp_memory = start_temp_memory(&usb_interface->arena, size, false);
+
+    macos_read_from_rp2040(usb_interface, address, temp_memory.base, size);
+    if(memcmp(temp_memory.base, buffer_to_compare, size) != 0)
+    {
+        // TODO(gh) log
+        assert(0);
+    }
+
+    end_temp_memory(&temp_memory);
 }
 
 

@@ -75,10 +75,12 @@ struct PicoBootCommand // all commands are 32 bytes, should be cleared to 0 befo
 #endif
  */
 
-// this is only specific to RP2040!
+// only specific to RP2040!
 struct RP2040USBInterface
 {
     IOUSBInterfaceInterface **macos_usb_interface; // TODO(gh) support more platforms
+
+    MemoryArena arena;
 
     u8 bulk_in_endpoint_index;
     u8 bulk_out_endpoint_index;

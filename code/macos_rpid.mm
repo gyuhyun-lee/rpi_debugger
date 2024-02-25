@@ -406,7 +406,7 @@ internal void
 raw_usb_device_added(void *refCon, io_iterator_t io_iter)
 {
     io_service_t usb_device_iter = IOIteratorNext(io_iter); // returns 0 if there is no more device
-    RP2040USBInterface usb_interface = {};
+    RP2040USBInterface *usb_interface = (RP2040USBInterface *)refCon;
 
     IOUSBDeviceInterface        **usb_device = 0; 
     while (usb_device_iter)
@@ -611,7 +611,7 @@ raw_usb_device_added(void *refCon, io_iterator_t io_iter)
 
             if((*macos_usb_interface)->USBInterfaceOpen(macos_usb_interface) == kIOReturnSuccess)
             {
-                usb_interface.macos_usb_interface = macos_usb_interface;
+                usb_interface->macos_usb_interface = macos_usb_interface;
             }
             else
             {
@@ -623,9 +623,9 @@ raw_usb_device_added(void *refCon, io_iterator_t io_iter)
     } // if(usb_device)
 
     // get bulk in/out endpoint indices
-    if(usb_interface.macos_usb_interface)
+    if(usb_interface->macos_usb_interface)
     {
-        IOUSBInterfaceInterface **macos_usb_interface = usb_interface.macos_usb_interface;
+        IOUSBInterfaceInterface **macos_usb_interface = usb_interface->macos_usb_interface;
 
         u8 endpoint_count = 0;
         (*macos_usb_interface)->GetNumEndpoints(macos_usb_interface, &endpoint_count);
@@ -689,12 +689,12 @@ raw_usb_device_added(void *refCon, io_iterator_t io_iter)
                 {
                     case kUSBOut: // 0
                     {
-                        usb_interface.bulk_out_endpoint_index = (u8)endpoint_index;
+                        usb_interface->bulk_out_endpoint_index = (u8)endpoint_index;
                     }break;
 
                     case kUSBIn: // 1
                     {
-                        usb_interface.bulk_in_endpoint_index = (u8)endpoint_index;
+                        usb_interface->bulk_in_endpoint_index = (u8)endpoint_index;
                     }break;
 
                     default :
@@ -713,15 +713,15 @@ raw_usb_device_added(void *refCon, io_iterator_t io_iter)
         }
     } // if(usb_interface.macos_usb_interface)
 
-    IOUSBInterfaceInterface **macos_usb_interface = usb_interface.macos_usb_interface;
+    IOUSBInterfaceInterface **macos_usb_interface = usb_interface->macos_usb_interface;
 
     // clear any stall/halt bits from every endpoints
     // this also synchronizes bit toggle(usbspec 1.1 )
-    assert((*usb_interface.macos_usb_interface)->AbortPipe(usb_interface.macos_usb_interface, usb_interface.bulk_in_endpoint_index) == kIOReturnSuccess);
-    assert((*usb_interface.macos_usb_interface)->ClearPipeStallBothEnds(usb_interface.macos_usb_interface, usb_interface.bulk_in_endpoint_index) == kIOReturnSuccess);
+    assert((*usb_interface->macos_usb_interface)->AbortPipe(usb_interface->macos_usb_interface, usb_interface->bulk_in_endpoint_index) == kIOReturnSuccess);
+    assert((*usb_interface->macos_usb_interface)->ClearPipeStallBothEnds(usb_interface->macos_usb_interface, usb_interface->bulk_in_endpoint_index) == kIOReturnSuccess);
 
-    assert((*usb_interface.macos_usb_interface)->AbortPipe(usb_interface.macos_usb_interface, usb_interface.bulk_out_endpoint_index) == kIOReturnSuccess);
-    assert((*usb_interface.macos_usb_interface)->ClearPipeStallBothEnds(usb_interface.macos_usb_interface, usb_interface.bulk_out_endpoint_index) == kIOReturnSuccess);
+    assert((*usb_interface->macos_usb_interface)->AbortPipe(usb_interface->macos_usb_interface, usb_interface->bulk_out_endpoint_index) == kIOReturnSuccess);
+    assert((*usb_interface->macos_usb_interface)->ClearPipeStallBothEnds(usb_interface->macos_usb_interface, usb_interface->bulk_out_endpoint_index) == kIOReturnSuccess);
 
     // create async event source
 #if 0
@@ -741,24 +741,20 @@ raw_usb_device_added(void *refCon, io_iterator_t io_iter)
     }
 #endif
 
-#if 1
-    // reset the pipe using the control pipeline,
-    // here we cannot use WritePipe and should use ControlRequest
-    {
-        IOUSBDevRequest *setup_packet = (IOUSBDevRequest *)malloc(sizeof(IOUSBDevRequest));
-        setup_packet->bmRequestType = 0b01000001;
-        setup_packet->bRequest = 0b01000001;
-        setup_packet->wValue = 0;
-        setup_packet->wIndex = 1; // in this case, index of the interface
-        setup_packet->wLength = 0;
+    // reset rp2040 usb interface
+    IOUSBDevRequest reset_request = {};
+    reset_request.bmRequestType = 0b01000001;
+    reset_request.bRequest = 0b01000001;
+    reset_request.wValue = 0;
+    reset_request.wIndex = 1; // in this case, index of the interface
+    reset_request.wLength = 0;
 
-        IOReturn kr = (*usb_interface.macos_usb_interface)->ControlRequest(usb_interface.macos_usb_interface, 0, setup_packet);
-        assert(kr == kIOReturnSuccess);
-
-    }
-#endif
+    IOReturn kr = (*usb_interface->macos_usb_interface)->ControlRequest(usb_interface->macos_usb_interface, 0, &reset_request);
+    assert(kr == kIOReturnSuccess);
 
 #if 0
+    // TODO(gh) this doesn't work for whatever reason... 
+    // which is fine for now because we are not using the usb mass storage interface
     // get exclusive access
     {
         PicoBootCommand excl_command = {};
@@ -882,26 +878,9 @@ raw_usb_device_added(void *refCon, io_iterator_t io_iter)
                                (h3 << 0);
     }
 
-#if 1
     u32 pio0_instruction_address = 0x20040000;
-    macos_write_to_rp2040(&usb_interface, pio0_instruction_address, pio0_instructions, 32*2);
-    {
-        void *read_buffer = malloc(32*2);
-        macos_read_from_rp2040(&usb_interface, pio0_instruction_address, read_buffer, 32*2);
-        macos_wait_for_command_complete(&usb_interface);
-        for(u32 i = 0;
-                i < 32;
-                i++)
-        {
-            u16 read = *((u16 *)read_buffer + i);
-
-            if(read != pio0_instructions[i])
-            {
-                assert(0);
-            }
-        }
-    }
-#endif
+    macos_write_to_rp2040(usb_interface, pio0_instruction_address, pio0_instructions, 32*2);
+    macos_verify_write_to_rp2040(usb_interface, pio0_instruction_address, pio0_instructions, 32*2);
 
     char bin_path[256];
     memset(bin_path, 0, 256); // TODO(gh) zero-memory
@@ -910,27 +889,10 @@ raw_usb_device_added(void *refCon, io_iterator_t io_iter)
     // unsafe_string_append(bin_path, "code/rp2040/notmain.bin");
     PlatformReadFileResult bin_file = debug_macos_read_file(bin_path);
 
-    u32 core0_instruction_address = 0x20000000;
-
     // write the code to ram
-    macos_write_to_rp2040(&usb_interface, core0_instruction_address, bin_file.memory, bin_file.size);
-
-    // debug, testing whether I get the same bytes that I wrote
-    void *read_buffer = malloc(bin_file.size);
-    macos_read_from_rp2040(&usb_interface, core0_instruction_address, read_buffer, bin_file.size);
-    macos_wait_for_command_complete(&usb_interface);
-    for(u32 i = 0;
-            i < bin_file.size;
-            i++)
-    {
-        u8 read = *((u8 *)read_buffer + i);
-        u8 file = *((u8 *)bin_file.memory + i);
-
-        if(read != file)
-        {
-            assert(0);
-        }
-    }
+    u32 core0_instruction_address = 0x20000000;
+    macos_write_to_rp2040(usb_interface, core0_instruction_address, bin_file.memory, bin_file.size);
+    macos_verify_write_to_rp2040(usb_interface, core0_instruction_address, bin_file.memory, bin_file.size);
 
     // move the PC and reboot RP2040
     PicoBootCommand reboot_command = {};
@@ -946,51 +908,8 @@ raw_usb_device_added(void *refCon, io_iterator_t io_iter)
     //reboot_command.args1 = 0; // SP
     reboot_command.args2 = 10;
     reboot_command.args3 = 0;
-    macos_bulk_transfer_out(&usb_interface, &reboot_command, sizeof(PicoBootCommand)); // write out the command
-    macos_bulk_transfer_in_zero(&usb_interface);
-
-#if 0
-    u32 data_size = 256; // 256B is the minimum granularity, rp2040 will pad the data with 0 if it's smaller than 256B
-    void *test_output = malloc(data_size);
-    for(u32 iter = 0;
-            iter < 1000;
-            iter++)
-    {
-        memset(test_output, 0, data_size);
-        u32 address = 0;
-        b32 read_result = macos_read_from_bulk_in_endpoint(&usb_interface, address, test_output, data_size, 0x0);
-        printf("%u : ", iter);
-        if(read_result)
-        {
-            // debug, print out the data that we read 
-            for(u32 i = 0;
-                    i < data_size;
-                    i++)
-            {
-                printf("%u ", *((u8 *)(test_output) + i));
-            }
-        }
-        else
-        {
-            printf("failed");
-        }
-        printf("\n");
-
-        // if(iter & 1)
-        if(0)
-        {
-            // assert((*usb_interface.macos_usb_interface)->AbortPipe(usb_interface.macos_usb_interface, usb_interface.bulk_in_endpoint_index) == kIOReturnSuccess);
-            // assert((*usb_interface.macos_usb_interface)->ClearPipeStallBothEnds(usb_interface.macos_usb_interface, usb_interface.bulk_in_endpoint_index) == kIOReturnSuccess);
-
-            // assert((*usb_interface.macos_usb_interface)->AbortPipe(usb_interface.macos_usb_interface, usb_interface.bulk_out_endpoint_index) == kIOReturnSuccess);
-            // assert((*usb_interface.macos_usb_interface)->ClearPipeStallBothEnds(usb_interface.macos_usb_interface, usb_interface.bulk_out_endpoint_index) == kIOReturnSuccess);
-        }
-
-        // sleep(1);
-    }
-#endif
-
-    int a00 = 1;
+    macos_bulk_transfer_out(usb_interface, &reboot_command, sizeof(PicoBootCommand)); // write out the command
+    macos_bulk_transfer_in_zero(usb_interface);
 }
 
 internal void
@@ -1057,17 +976,24 @@ macos_io_thread_proc(void *data)
     io_iters[2] = 0;
     io_iters[3] = 0;
 
+    // TODO(gh) this whole thing is quite dangerous, since the usb_interface is in the stack of this thread.
+    // in the future, we would move this to the main thread
+    RP2040USBInterface usb_interface = {}; 
+    u32 usb_interface_buffer_size = 16*1024;
+    void *usb_interface_buffer_base = malloc(usb_interface_buffer_size);
+    usb_interface.arena = start_memory_arena(usb_interface_buffer_base, usb_interface_buffer_size, false);
+
     // first connected
     IOServiceAddMatchingNotification(notification_port,
                                      kIOMatchedNotification, usb_matching_dict,
-                                     raw_usb_device_added, 0, io_iters + 0);
-    raw_usb_device_added(0, io_iters[0]); // debug probe might be already connected, so try to find it ourselves at least once
+                                     raw_usb_device_added, &usb_interface, io_iters + 0);
+    raw_usb_device_added(&usb_interface, io_iters[0]); // debug probe might be already connected, so try to find it ourselves at least once
 
     // disconnected
     IOServiceAddMatchingNotification(notification_port,
                     kIOTerminatedNotification, usb_matching_dict,
-                    raw_usb_device_removed, 0, io_iters + 1);
-    raw_usb_device_removed(0, io_iters[1]);
+                    raw_usb_device_removed, &usb_interface, io_iters + 1);
+    raw_usb_device_removed(&usb_interface, io_iters[1]);
 
     mach_port_deallocate(mach_task_self(), iokit_master_port);
 
@@ -1107,10 +1033,6 @@ int main(void)
         assert(0);
     }
     pthread_attr_destroy(&attr);
-
-#if 0
-
-#endif
 
     // load ftdi library
     void *ftdi_library = dlopen("../lib/libftd2xx.1.4.24.dylib", RTLD_LAZY|RTLD_GLOBAL);

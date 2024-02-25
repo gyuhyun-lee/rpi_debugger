@@ -19,7 +19,12 @@ clean:
 	rm -f *.disasm
 
 main : rp2040_main.s
-	arm-none-eabi-as $(ASSEMBLER_FLAGS) rp2040_main.s -o rp2040_main.elf
+	# even though we only have once main file for now,
+	# we go through the linker process to catch unknown label(constants) errors
+	arm-none-eabi-as $(ASSEMBLER_FLAGS) rp2040_main.s -o rp2040_main.o
+	# passing in the linker memory map file to see the instructions starting at 0x0
+	# in disasm
+	arm-none-eabi-ld $(LINKER_FLAGS) -T memmap.ld rp2040_main.o -o rp2040_main.elf
 
 notmain.bin : rp2040_main.elf
 	arm-none-eabi-objcopy -O binary rp2040_main.elf rp2040_main.bin

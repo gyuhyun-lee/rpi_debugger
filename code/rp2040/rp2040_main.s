@@ -2,24 +2,76 @@
 .thumb // NOTE(gh) 16-bit thumb mode, so 32-bit fetch would actually fetch 2 instructions
 
 // constants 
-// RESETS_BASE 0x4000c000
-// 
+.equ GPIO_FUNCSEL_SIO, 5
+.equ GPIO_FUNCSEL_PIO0, 6
+.equ GPIO_FUNCSEL_PIO1, 6
+
+// addresses, these will be stored at the end of the instruction stream
+// as they are too large
 .equ RESETS_BASE, 0x4000c000 // 1 == peripheral is in reset
 .equ SIO_BASE, 0xd0000000
 .equ IO_BANK0_BASE, 0x40014000 
 .equ PIO0_BASE, 0x50200000
 .equ PIO1_BASE, 0x50300000
+.equ XOSC_BASE, 0x40024000
 
 .equ RESETS_RESET, (RESETS_BASE+0x3000)
 .equ RESETS_RESET_DONE_RW, (RESETS_BASE + 0x8)
 
+.equ CLK_BASE, 0x40008000
+
+.equ CLK_REF_CTRL_RW, (CLK_BASE+0x30+0x0000)
+.equ CLK_REF_CTRL_XOR, (CLK_BASE+0x30+0x1000)
+.equ CLK_REF_CTRL_SET, (CLK_BASE+0x30+0x2000)
+.equ CLK_REF_CTRL_CLR, (CLK_BASE+0x30+0x3000)
+
+.equ CLK_SYS_CTRL_RW, (CLK_BASE+0x3C+0x0000)
+.equ CLK_SYS_CTRL_XOR, (CLK_BASE+0x3C+0x1000)
+.equ CLK_SYS_CTRL_SET, (CLK_BASE+0x3C+0x2000)
+.equ CLK_SYS_CTRL_CLR, (CLK_BASE+0x3C+0x3000)
+
+.equ XOSC_CTRL_RW, (XOSC_BASE+0x00+0x0000)
+.equ XOSC_CTRL_XOR, (XOSC_BASE+0x00+0x1000)
+.equ XOSC_CTRL_SET, (XOSC_BASE+0x00+0x2000)
+.equ XOSC_CTRL_CLR, (XOSC_BASE+0x00+0x3000)
+
+.equ XOSC_STATUS_RW, (XOSC_BASE+0x04+0x0000)
+.equ XOSC_STATUS_XOR, (XOSC_BASE+0x04+0x1000)
+.equ XOSC_STATUS_SET, (XOSC_BASE+0x04+0x2000)
+.equ XOSC_STATUS_CLR, (XOSC_BASE+0x04+0x3000)
+
+.equ XOSC_STARTUP_RW, (XOSC_BASE+0x0C+0x0000)
+.equ XOSC_STARTUP_XOR, (XOSC_BASE+0x0C+0x1000)
+.equ XOSC_STARTUP_SET, (XOSC_BASE+0x0C+0x2000)
+.equ XOSC_STARTUP_CLR, (XOSC_BASE+0x0C+0x3000)
+
+.equ SIO_GPIO_OUT_RW, (SIO_BASE + 0x10) // SIO_BASE + GPIO_OUT
 .equ SIO_GPIO_OUT_SET, (SIO_BASE + 0x14) // SIO_BASE + GPIO_OUT_SET
 .equ SIO_GPIO_OUT_CLR, (SIO_BASE + 0x18) // SIO_BASE + GPIO_OUT_CLR 
+.equ SIO_GPIO_OUT_XOR, (SIO_BASE + 0x01c) // SIO_BASE + GPIO_OUT_XOR
 .equ SIO_GPIO_OE_SET, (SIO_BASE + 0x24) // SIO_BASE + GPIO_OE_SET
 .equ SIO_GPIO_OE_CLR, (SIO_BASE + 0x28) // SIO_BASE + GPIO_OE_CLR 
 
-.equ IO_BANK0_GPIO0_CTRL_RW, (IO_BANK0_BASE + (0x8 * 0) + 4) // IO_BANK0_BASE + sizeof(iobank0_status_ctrl_hw_t) * 25 + 4(seconds register in iobank0_status_ctrl_hw_t)
-.equ IO_BANK0_GPIO25_CTRL_RW, (IO_BANK0_BASE + (0x8 * 25) + 4) // IO_BANK0_BASE + sizeof(iobank0_status_ctrl_hw_t) * 25 + 4(seconds register in iobank0_status_ctrl_hw_t)
+// IO_BANK0_BASE + sizeof(iobank0_status_ctrl_hw_t) * gpio_index + x(register offset in iobank0_status_ctrl_hw_t struct)
+.equ GPIO0_CTRL_RW, (IO_BANK0_BASE + (0x8 * 0) + 4 + 0x0000) 
+.equ GPIO0_CTRL_XOR, (IO_BANK0_BASE + (0x8 * 0) + 4 + 0x1000) 
+.equ GPIO0_CTRL_SET, (IO_BANK0_BASE + (0x8 * 0) + 4 + 0x2000) 
+.equ GPIO0_CTRL_CLR, (IO_BANK0_BASE + (0x8 * 0) + 4 + 0x3000) 
+
+.equ GPIO1_CTRL_RW, (IO_BANK0_BASE + (0x8 * 1) + 4 + 0x0000) 
+.equ GPIO1_CTRL_XOR, (IO_BANK0_BASE + (0x8 * 1) + 4 + 0x1000) 
+.equ GPIO1_CTRL_SET, (IO_BANK0_BASE + (0x8 * 1) + 4 + 0x2000) 
+.equ GPIO1_CTRL_CLR, (IO_BANK0_BASE + (0x8 * 1) + 4 + 0x3000) 
+
+.equ GPIO2_CTRL_RW, (IO_BANK0_BASE + (0x8 * 2) + 4 + 0x0000) 
+.equ GPIO2_CTRL_XOR, (IO_BANK0_BASE + (0x8 * 2) + 4 + 0x1000) 
+.equ GPIO2_CTRL_SET, (IO_BANK0_BASE + (0x8 * 2) + 4 + 0x2000) 
+.equ GPIO2_CTRL_CLR, (IO_BANK0_BASE + (0x8 * 2) + 4 + 0x3000) 
+
+.equ GPIO25_CTRL_RW, (IO_BANK0_BASE + (0x8 * 25) + 4 + 0x0000) 
+.equ GPIO25_CTRL_XOR, (IO_BANK0_BASE + (0x8 * 25) + 4 + 0x1000) 
+.equ GPIO25_CTRL_SET, (IO_BANK0_BASE + (0x8 * 25) + 4 + 0x2000) 
+.equ GPIO25_CTRL_CLR, (IO_BANK0_BASE + (0x8 * 25) + 4 + 0x3000) 
 
 // PIO
 .equ PIO0_CTRL, (PIO0_BASE + 0x0)
@@ -54,8 +106,43 @@
 .equ PIO_SM0_INSTR, (PIO0_BASE + 0x0d8) // write to change the SM's
 .equ PIO_SM0_PINCTRL, (PIO0_BASE + 0x0dc)
 
-// main entry point
-start:
+// gnu entry point
+.globl _start
+_start:
+
+start_xosc:
+    // TODO(gh) also set the timer using CLK_RESUS just in case?
+    ldr r2, =XOSC_CTRL_RW
+    mov r0, #0xAA
+    lsl r0, #4
+    str r0, [r2] // 0xAA0 = 1-15mhz range
+
+    ldr r2, =XOSC_CTRL_SET
+    mov r0, #0xfa
+    lsl r0, r0, #4
+    mov r1, #0xb 
+    orr r0, r0, r1 // create 0xfab
+    lsl r0, r0, #12
+    str r0, [r2] // enable XOSC
+
+    mov r0, #1
+    lsl r0, #31
+    ldr r2, =XOSC_STATUS_RW
+wait_until_xosc_stable :
+    ldr r1, [r2]
+    tst r0, r1
+    beq wait_until_xosc_stable 
+
+switch_to_xosc :
+    // TODO(gh) this is from dwelch, why do we need to change the
+    // clk_ref first and then derive clk_sys from it?
+    ldr r2, =CLK_REF_CTRL_RW
+    mov r0, #2
+    str r0, [r2]
+    ldr r2, =CLK_SYS_CTRL_RW
+    mov r0, #0
+    str r0, [r2]
+
     mov r1, #1
     lsl r0, r1, #5 // IO Bank0
     lsl r1, r1, #10 // PIO0
@@ -75,22 +162,22 @@ wait_until_reset_is_undone :
     beq wait_until_reset_is_undone // branch if the result == 0 
 
     mov r0, #1
-    lsl r0, r0, #25 // GPIO 25 bit
-
-disable_gpio_25 :
+    lsl r0, r0, #2 // GPIO 2 bit
+disable_gpio_2 :
     ldr r2, =SIO_GPIO_OE_CLR
-    str r0, [r2] // disable output for gpio 25
+    str r0, [r2] // disable output for this gpio
     ldr r2, =SIO_GPIO_OUT_CLR
-    str r0, [r2] // turn off gpio 25 
+    str r0, [r2] 
 
-change_gpio_25_function :
-    ldr r2, =IO_BANK0_GPIO25_CTRL_RW
-    mov r1, #5
-    str r1, [r2] // gpio 25 funtion = 5
+change_gpio_2_function :
+    ldr r2, =GPIO2_CTRL_RW
+    mov r1, #GPIO_FUNCSEL_SIO
+    str r1, [r2] 
 
-enable_gipo_25 :
-    ldr r2, =SIO_GPIO_OE_SET
+enable_gpio_2 :
+    ldr r2, =SIO_GPIO_OE_SET 
     str r0, [r2]
+
 
     // load 32(always) pio instructions from SRAM5
     // and store it in PIO0 instruction buffer
@@ -110,8 +197,32 @@ load_pio0_instructions :
     bne load_pio0_instructions
 
 init_pio_sm0 : 
-    ldr r2, =IO_BANK0_GPIO0_CTRL_RW
-    mov r1, #6 // make GPIO0 to be controllable by the PIO
+/*
+    // change sm0 clock divisor
+    ldr r2, =PIO_SM0_CLKDIV 
+    mov r1, #1
+    lsl r1, r1, #16
+    str r1, [r2]
+*/
+
+    // make GPIO0 to be controllable by the PIO,
+    // and set the direction to be output
+    ldr r2, =GPIO0_CTRL_RW
+    // mov r1, #0x3
+    // lsl r1, r1, #12
+    // mov r3, #6 
+    // orr r1, r1, r3
+    mov r1, #6
+    str r1, [r2]
+
+    // change the wrapping address
+    // the numbers are per pio instruction(31 == last pio instruction in buffer)
+    ldr r2, =PIO_SM0_EXECCTRL
+    mov r1, #2 // wrap_top
+    lsl r1, r1, #12
+    mov r3, #1 // wrap_bottom
+    lsl r3, r3, #7
+    orr r1, r1, r3 
     str r1, [r2]
 
     // move the program counter of SM0
@@ -119,23 +230,57 @@ init_pio_sm0 :
     ldr r2, =PIO_SM0_INSTR
     str r1, [r2]
 
-    // start SM0
+    // TODO(gh) just a debug, move this somewhere else
+    // pre-populate GPIO addresses
+    ldr r3, =SIO_GPIO_OUT_SET
+    ldr r4, =SIO_GPIO_OUT_CLR
+    ldr r5, =SIO_GPIO_OUT_RW
+    mov r0, #1
+    lsl r0, r0, #2
+
+    // start the SM0
     mov r1, #1
     ldr r2, =PIO0_CTRL
-    str r1, [r2] // enable sm0
+    str r1, [r2]
+
+    nop // debug, for sm0 set pindirs
+change_gpio_2 : 
+    // ldr r0, [r5]
+    // lsl r0, r0, #2
+    str r0, [r5]
+    b change_gpio_2
+
+    /*
     
-    // pre-populate addresses for the LEd
+    mov r0, #1
+    lsl r0, r0, #25 // GPIO 25 bit
+disable_gpio_25 :
+    ldr r2, =SIO_GPIO_OE_CLR
+    str r0, [r2] // disable output for gpio 25
+    ldr r2, =SIO_GPIO_OUT_CLR
+    str r0, [r2] // turn off gpio 25 
+
+change_gpio_25_function :
+    ldr r2, =GPIO25_CTRL_RW
+    mov r1, #GPIO_FUNCSEL_SIO
+    str r1, [r2] // gpio 25 funtion = 5(SIO)
+
+enable_gpio_25 :
+    ldr r2, =SIO_GPIO_OE_SET
+    str r0, [r2]
+
+    // pre-populate addresses for the LED
     ldr r2, =SIO_GPIO_OUT_SET
     ldr r3, =SIO_GPIO_OUT_CLR
     mov r4, #1 // iter
     lsl r4, r4, #14
-
 loop_led_on : 
     str r0, [r2] // set GPIO 25
     sub r4, #1
     bne loop_led_on
     mov r4, #1 // iter
     lsl r4, r4, #18   
+
 loop_led_off:
     str r0, [r3] // clear GPIO 25
     sub r4, #1
@@ -143,6 +288,7 @@ loop_led_off:
     mov r4, #1 // iter
     lsl r4, r4, #18   
     b loop_led_on
+    */
 
     
 
