@@ -65,7 +65,7 @@ typedef double f64;
 #define gigabytes(value) 1024LL*megabytes(value)
 #define terabytes(value) 1024LL*gigabytes(value)
 
-#define sec_to_nanosec 1.0e+9f
+#define sec_to_nanosec 100000000
 #define sec_to_millisec 1000.0f
 //#define nano_sec_to_micro_sec 0.0001f // TODO(gh): Find the correct value :(
 

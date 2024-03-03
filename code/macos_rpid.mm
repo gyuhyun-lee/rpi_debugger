@@ -1215,7 +1215,8 @@ Question :
 
     is_running = true;
 #if 1
-    u64 last_time = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+    u64 start_time = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+    u64 last_time = start_time;
     while(is_running)
     {
         // main loop
@@ -1255,6 +1256,16 @@ Question :
             // TODO(gh) : Whenever we miss the frame re-sync with the display link
             // printf("Missed frame, exceeded by %dms(%.6fs)!\n", time_passed_in_msec, time_passed_in_sec);
         }
+
+        // TODO(gh) for now exit the application after 2 minutes
+        u64 time_since_startup_in_nsec = clock_gettime_nsec_np(CLOCK_UPTIME_RAW) - start_time;
+        f64 time_since_startup_in_sec = ((f64)time_since_startup_in_nsec / sec_to_nanosec);
+
+        if(time_since_startup_in_sec > 60)
+        {
+            is_running = false;
+        }
+
         last_time = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
     }
 #endif

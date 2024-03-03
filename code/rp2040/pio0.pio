@@ -1,6 +1,93 @@
-.program square_wave
-    set pindirs, 1   
-loop:
-    set pins, 1  
-    set pins, 0     
+.program swd
+
+/*
+// test
+    set pindirs, 1 
+swdclk_loop:
+    set pins, 1
+    set pins, 0 
+*/
+
+.side_set 1 // swdio SM will also move the clock
+
+
+// @-----------------------------------------------------------------------------------------------------------------------------------
+    set pindirs, 1 side 0 
+    pull block side 0 // get the clock count to generate
+    mov y, isr side 0
+swdclk_loop:
+    set pins, 1 side 0 [2] 
+    jmp y--, swdclk_loop side 0 [2] // TODO(gh) test this!!!
+    
+// @-----------------------------------------------------------------------------------------------------------------------------------
+// major problem 1 : pio cannot pass in the value to other pio
+// 2 : turnaround(for write) is 1 swdclk == 6 pio cycles anyway
+// 3 : additional logic to detect whether it's read or write gives us some spare cycles anyway
+
+// @-----------------------------------------------------------------------------------------------------------------------------------
+wait_fifo : 
+    pull block side 0 // wait until there's something inside the tx fifo
+    set pindirs, 1 side 0 // TODO(gh) CPU can probably do this .. .
+    mov x, osr side 0 // cache header in x
+
+// @-----------------------------------------------------------------------------------------------------------------------------------
+// __/---\___/---\___/-
+// o       o      j                 
+//   
+send_header_start :
+    mov osr, x side 0 // not necessary for the first iteration, but required for the retries
+    set y, 7 side 0
+    // TODO(gh) make the other sm to generate the square wave 
+header_loop : 
+    out pins, 1 side 0 [5]  
+    out pins, 1 side 0 [4] 
+    jmp y--, header_loop side 0  
+
+// @-----------------------------------------------------------------------------------------------------------------------------------
+    // turnaround, consume the first bit from ACK
+    set pindirs, 0 side 0 [10] 
+
+// @-----------------------------------------------------------------------------------------------------------------------------------
+// __/---\___/---\___/-
+//    i       i   psp   
+get_ack :
+    in pins, 1 side 0 [5] // wait bit
+    in pins, 1 side 0 [2] // fault bit
+
+    // pre-populate the register to save the instruction buffer
+    pull noblock side 0 
+    set y, 31 side 0 
+
+    push iffull side 0 
+
+// @-----------------------------------------------------------------------------------------------------------------------------------
+// __/---\___/---\___/-
+//  s   s  os   s jos     
+// TODO(gh) turnaround 
+pre_write_turnaround : 
+    set pindirs, 1 side 1 [2] 
+    set y, 31 side 0 [1]
+write_loop :
+    out pins, 1 side 0 
+    set pins, 1 side 1 [2] 
+    set pins, 0 side 0
+    jmp y--, write_loop side 0 
+    jmp wait_fifo side 0
+
+// @-----------------------------------------------------------------------------------------------------------------------------------
+// __/---\___/- ... \___/---\___
+//  i   s  ji         jp   j  
+read32 : // pin direction is implied to be 0, as the previous stage is ack input
+    set y, 31 side 0
+read_loop : 
+    in pins, 1 side 1 [2]  
+    set pins, 0 side 0[1]
+    jmp y--, read_loop side 0 
+
+post_read_turnaround : 
+    push iffull side 1 [2]
+    jmp wait_fifo side 0 // TODO(gh) we probably don't need delay here?
+
+// @-----------------------------------------------------------------------------------------------------------------------------------
+
 

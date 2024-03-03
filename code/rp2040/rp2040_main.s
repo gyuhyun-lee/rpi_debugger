@@ -1,183 +1,175 @@
 .cpu cortex-m0
-.thumb // NOTE(gh) 16-bit thumb mode, so 32-bit fetch would actually fetch 2 instructions
+.thumb // NOTE(gh) 16-bit thumb mode, so one instruction fetch would actually fetch 2 instructions
 
-// constants 
-.equ GPIO_FUNCSEL_SIO, 5
-.equ GPIO_FUNCSEL_PIO0, 6
-.equ GPIO_FUNCSEL_PIO1, 6
+.include "rp2040_defines.S"
 
-// addresses, these will be stored at the end of the instruction stream
-// as they are too large
-.equ RESETS_BASE, 0x4000c000 // 1 == peripheral is in reset
-.equ SIO_BASE, 0xd0000000
-.equ IO_BANK0_BASE, 0x40014000 
-.equ PIO0_BASE, 0x50200000
-.equ PIO1_BASE, 0x50300000
-.equ XOSC_BASE, 0x40024000
+.macro set_bit, reg, bit_pos
+    mov \reg, #1
+    lsl \reg, #\bit_pos
+.endm
 
-.equ RESETS_RESET, (RESETS_BASE+0x3000)
-.equ RESETS_RESET_DONE_RW, (RESETS_BASE + 0x8)
+.macro deassert_peri_reset, reg_address, reg0, reg1, bit_pos
 
-.equ CLK_BASE, 0x40008000
+deassert_peri\@: 
+    ldr \reg_address, =RESETS_RESET_CLR
+    mov \reg0, #1
+    lsl \reg0, \reg0, #\bit_pos
+    str \reg0, [\reg_address] 
 
-.equ CLK_REF_CTRL_RW, (CLK_BASE+0x30+0x0000)
-.equ CLK_REF_CTRL_XOR, (CLK_BASE+0x30+0x1000)
-.equ CLK_REF_CTRL_SET, (CLK_BASE+0x30+0x2000)
-.equ CLK_REF_CTRL_CLR, (CLK_BASE+0x30+0x3000)
-
-.equ CLK_SYS_CTRL_RW, (CLK_BASE+0x3C+0x0000)
-.equ CLK_SYS_CTRL_XOR, (CLK_BASE+0x3C+0x1000)
-.equ CLK_SYS_CTRL_SET, (CLK_BASE+0x3C+0x2000)
-.equ CLK_SYS_CTRL_CLR, (CLK_BASE+0x3C+0x3000)
-
-.equ XOSC_CTRL_RW, (XOSC_BASE+0x00+0x0000)
-.equ XOSC_CTRL_XOR, (XOSC_BASE+0x00+0x1000)
-.equ XOSC_CTRL_SET, (XOSC_BASE+0x00+0x2000)
-.equ XOSC_CTRL_CLR, (XOSC_BASE+0x00+0x3000)
-
-.equ XOSC_STATUS_RW, (XOSC_BASE+0x04+0x0000)
-.equ XOSC_STATUS_XOR, (XOSC_BASE+0x04+0x1000)
-.equ XOSC_STATUS_SET, (XOSC_BASE+0x04+0x2000)
-.equ XOSC_STATUS_CLR, (XOSC_BASE+0x04+0x3000)
-
-.equ XOSC_STARTUP_RW, (XOSC_BASE+0x0C+0x0000)
-.equ XOSC_STARTUP_XOR, (XOSC_BASE+0x0C+0x1000)
-.equ XOSC_STARTUP_SET, (XOSC_BASE+0x0C+0x2000)
-.equ XOSC_STARTUP_CLR, (XOSC_BASE+0x0C+0x3000)
-
-.equ SIO_GPIO_OUT_RW, (SIO_BASE + 0x10) // SIO_BASE + GPIO_OUT
-.equ SIO_GPIO_OUT_SET, (SIO_BASE + 0x14) // SIO_BASE + GPIO_OUT_SET
-.equ SIO_GPIO_OUT_CLR, (SIO_BASE + 0x18) // SIO_BASE + GPIO_OUT_CLR 
-.equ SIO_GPIO_OUT_XOR, (SIO_BASE + 0x01c) // SIO_BASE + GPIO_OUT_XOR
-.equ SIO_GPIO_OE_SET, (SIO_BASE + 0x24) // SIO_BASE + GPIO_OE_SET
-.equ SIO_GPIO_OE_CLR, (SIO_BASE + 0x28) // SIO_BASE + GPIO_OE_CLR 
-
-// IO_BANK0_BASE + sizeof(iobank0_status_ctrl_hw_t) * gpio_index + x(register offset in iobank0_status_ctrl_hw_t struct)
-.equ GPIO0_CTRL_RW, (IO_BANK0_BASE + (0x8 * 0) + 4 + 0x0000) 
-.equ GPIO0_CTRL_XOR, (IO_BANK0_BASE + (0x8 * 0) + 4 + 0x1000) 
-.equ GPIO0_CTRL_SET, (IO_BANK0_BASE + (0x8 * 0) + 4 + 0x2000) 
-.equ GPIO0_CTRL_CLR, (IO_BANK0_BASE + (0x8 * 0) + 4 + 0x3000) 
-
-.equ GPIO1_CTRL_RW, (IO_BANK0_BASE + (0x8 * 1) + 4 + 0x0000) 
-.equ GPIO1_CTRL_XOR, (IO_BANK0_BASE + (0x8 * 1) + 4 + 0x1000) 
-.equ GPIO1_CTRL_SET, (IO_BANK0_BASE + (0x8 * 1) + 4 + 0x2000) 
-.equ GPIO1_CTRL_CLR, (IO_BANK0_BASE + (0x8 * 1) + 4 + 0x3000) 
-
-.equ GPIO2_CTRL_RW, (IO_BANK0_BASE + (0x8 * 2) + 4 + 0x0000) 
-.equ GPIO2_CTRL_XOR, (IO_BANK0_BASE + (0x8 * 2) + 4 + 0x1000) 
-.equ GPIO2_CTRL_SET, (IO_BANK0_BASE + (0x8 * 2) + 4 + 0x2000) 
-.equ GPIO2_CTRL_CLR, (IO_BANK0_BASE + (0x8 * 2) + 4 + 0x3000) 
-
-.equ GPIO25_CTRL_RW, (IO_BANK0_BASE + (0x8 * 25) + 4 + 0x0000) 
-.equ GPIO25_CTRL_XOR, (IO_BANK0_BASE + (0x8 * 25) + 4 + 0x1000) 
-.equ GPIO25_CTRL_SET, (IO_BANK0_BASE + (0x8 * 25) + 4 + 0x2000) 
-.equ GPIO25_CTRL_CLR, (IO_BANK0_BASE + (0x8 * 25) + 4 + 0x3000) 
-
-// PIO
-.equ PIO0_CTRL, (PIO0_BASE + 0x0)
-.equ PIO0_FSTAT, (PIO0_BASE + 0x4)
-.equ PIO0_FDEBUG, (PIO0_BASE + 0x8)
-.equ PIO0_FLEVEL, (PIO0_BASE + 0xc)
-.equ PIO0_TXF0, (PIO0_BASE + 0x10)
-.equ PIO0_TXF1, (PIO0_BASE + 0x14)
-.equ PIO0_TXF2, (PIO0_BASE + 0x18)
-.equ PIO0_TXF3, (PIO0_BASE + 0x1c)
-.equ PIO0_RXF0, (PIO0_BASE + 0x20)
-.equ PIO0_RXF1, (PIO0_BASE + 0x24)
-.equ PIO0_RXF2, (PIO0_BASE + 0x28)
-.equ PIO0_RXF3, (PIO0_BASE + 0x2c)
-.equ PIO0_IRQ, (PIO0_BASE + 0x30)
-.equ PIO0_IRQ_FORCE, (PIO0_BASE + 0x34)
-.equ PIO0_INPUT_SYNC_BYPASS, (PIO0_BASE + 0x38)
-.equ PIO0_DBG_PADOUT, (PIO0_BASE + 0x3c)
-.equ PIO0_DBG_PADOE, (PIO0_BASE + 0x40)
-.equ PIO0_DBG_CFGINFO, (PIO0_BASE + 0x44)
-
-// although each 'slot' is 4 bytes in the address space, each 'instruction' is 2 bytes
-.equ PIO0_INSTR_MEM_START, (PIO0_BASE + 0x048) 
-// user-defined PIO instruction location inside SRAM. At startup, debug probe should load & store the instructions
-// from here to PIO0_INSTR_MEM_START
-.equ PIO0_INSTR_MEM_SRARM_START, 0x20040000 // sram bank 4 for now 
-
-.equ PIO_SM0_CLKDIV, (PIO0_BASE + 0x0c8) // Frequency = clock freq / (CLKDIV_INT + CLKDIV_FRAC / 256)
-.equ PIO_SM0_EXECCTRL, (PIO0_BASE + 0x0cc) 
-.equ PIO_SM0_SHIFTCTRL, (PIO0_BASE + 0x0d0) // out/in shift registers control
-.equ PIO_SM0_ADDR, (PIO0_BASE + 0x0d4) // RO
-.equ PIO_SM0_INSTR, (PIO0_BASE + 0x0d8) // write to change the SM's
-.equ PIO_SM0_PINCTRL, (PIO0_BASE + 0x0dc)
+    ldr \reg_address, =RESETS_RESET_DONE_RW
+loop_deassert_done\@ :
+    ldr \reg1, [\reg_address]
+    tst \reg0, \reg1
+    beq loop_deassert_done\@
+.endm
 
 // gnu entry point
 .globl _start
 _start:
 
-start_xosc:
-    // TODO(gh) also set the timer using CLK_RESUS just in case?
-    ldr r2, =XOSC_CTRL_RW
-    mov r0, #0xAA
-    lsl r0, #4
-    str r0, [r2] // 0xAA0 = 1-15mhz range
+// @-----------------------------------------------------------------------------------------------------------------------------------
+#define xosc_base           r7
+#define xosc_set_base       r6
+    
+#define xosc_delay_counter  r0
+set_xosc_startup_delay : 
+    ldr xosc_base, =XOSC_BASE
+    ldr xosc_set_base, =XOSC_SET_BASE
+    mov xosc_delay_counter, #47 // basically a 1ms delay
+    str xosc_delay_counter, [xosc_base, #XOSC_STARTUP_OFFSET]
+#undef xosc_delay_counter  
 
-    ldr r2, =XOSC_CTRL_SET
-    mov r0, #0xfa
-    lsl r0, r0, #4
-    mov r1, #0xb 
-    orr r0, r0, r1 // create 0xfab
-    lsl r0, r0, #12
-    str r0, [r2] // enable XOSC
+#define xosc_enable_value r0
+eanble_xosc:
+    ldr xosc_enable_value, =XOSC_ENABLE_VALUE
+    str xosc_enable_value, [xosc_set_base, #XOSC_CTRL_OFFSET] // enable XOSC
+#undef xosc_enable_value 
 
-    mov r0, #1
-    lsl r0, #31
-    ldr r2, =XOSC_STATUS_RW
-wait_until_xosc_stable :
-    ldr r1, [r2]
-    tst r0, r1
-    beq wait_until_xosc_stable 
+#define xosc_stable_bit r0
+#define xosc_status     r1
+wait_until_xosc_stable : 
+loop_until_xosc_stable : 
+    ldr xosc_status, [xosc_base, #XOSC_STATUS_OFFSET]
+    lsr xosc_status, #31
+    beq loop_until_xosc_stable 
+#undef xosc_stable_bit
+#undef xosc_status  
 
+#define clk_base r7
+#define clk_ref_src r0
+#define clk_sys_src r1
 switch_to_xosc :
-    // TODO(gh) this is from dwelch, why do we need to change the
-    // clk_ref first and then derive clk_sys from it?
-    ldr r2, =CLK_REF_CTRL_RW
-    mov r0, #2
-    str r0, [r2]
-    ldr r2, =CLK_SYS_CTRL_RW
-    mov r0, #0
-    str r0, [r2]
+	ldr clk_base, =CLK_BASE
+	mov clk_ref_src, #2			// clk_ref source = XOSC
+	str clk_ref_src, [clk_base, #0x30]
+	mov clk_sys_src, #0			// clk_sys source = clk_ref
+	str clk_sys_src, [clk_base, #0x3c]	
+#undef clk_base
+#undef clk_ref_src
+#undef clk_sys_src
 
-    mov r1, #1
-    lsl r0, r1, #5 // IO Bank0
-    lsl r1, r1, #10 // PIO0
-    orr r0, r0, r1  
+#undef xosc_base           
+#undef xosc_set_base       
+// @-----------------------------------------------------------------------------------------------------------------------------------
+#if 1 // disable pll
+/*
+    PLL programming sequence 
+    • Program the FBDIV(feedback divider)
+    • Turn on the main power and VCO
+    • Wait for the VCO to lock (i.e. keep its output frequency stable)
+    • Set up post dividers and turn them on
 
-    ldr r2, =RESETS_RESET 
+    result = (FREF / REFDIV) × FBDIV / (POSTDIV1 × POSTDIV2)
+    120Mhz = (12Mhz / 1) × 100 / (5 × 2)
+    
+    FREF is always drived from XOSC(12Mhz for the pico)
+    REFDIV is normally 1
+    FBDIV - the bigger the better accuracy but with higher power consumption
+    POSDIV1 should be bigger than POSTDIV2 for lower power consumption
+*/
+    deassert_peri_reset r7, r0, r1, 12
 
-    // rp2040 starts with most of the peripherals being in a reset state,
-    // so we should clear the reset state to enable the peripheral
-    str r0, [r2] 
+#define pll_sys_base  r7
+#define pll_sys_clr_base r6
+    ldr pll_sys_base, =PLL_SYS_BASE
+    ldr pll_sys_clr_base, =PLL_SYS_CLR_BASE
 
-    // wait until the reset clear has been done
-    ldr r2, =RESETS_RESET_DONE_RW
-wait_until_reset_is_undone : 
-    ldr r1, [r2]
-    tst r1, r0 // & two registers, set the flags
-    beq wait_until_reset_is_undone // branch if the result == 0 
+#define FBDIV r0
+configure_feedback_divider : 
+    mov FBDIV, #120
+    str FBDIV, [pll_sys_base, #PLL_SYS_FBDIV_INT_OFFSET]
+#undef FBDIV
 
-    mov r0, #1
-    lsl r0, r0, #2 // GPIO 2 bit
-disable_gpio_2 :
-    ldr r2, =SIO_GPIO_OE_CLR
-    str r0, [r2] // disable output for this gpio
-    ldr r2, =SIO_GPIO_OUT_CLR
-    str r0, [r2] 
+#define POSDIV1 r0
+#define POSDIV2 r1
+configure_post_dividers : 
+    mov POSDIV1, #6
+    lsl POSDIV1, #16
+    mov POSDIV2, #2 
+    lsl POSDIV2, #12
+    orr POSDIV1, POSDIV2
+    str POSDIV1, [pll_sys_base, #PLL_SYS_PRIM_OFFSET]
+#undef POSDIV1
+#undef POSDIV2
 
-change_gpio_2_function :
-    ldr r2, =GPIO2_CTRL_RW
-    mov r1, #GPIO_FUNCSEL_SIO
-    str r1, [r2] 
+#define VCOPD r0
+#define PD r1
+power_on_main_power_and_vco : 
+    set_bit VCOPD, 5
+    mov PD, #1
+    orr PD, VCOPD
+    str PD, [pll_sys_clr_base, #PLL_SYS_PWR_OFFSET]
+#undef VCOPD
+#undef PD
 
-enable_gpio_2 :
-    ldr r2, =SIO_GPIO_OE_SET 
-    str r0, [r2]
+#define pll_sys_ctrl_reg r1
+wait_vco_lock : 
+loop_wait_vco_lock : 
+    ldr pll_sys_ctrl_reg, [pll_sys_base, #PLL_SYS_CS_OFFSET]
+    lsr pll_sys_ctrl_reg, #31
+    beq loop_wait_vco_lock // lock bit == bit31
+#undef pll_sys_ctrl_reg
 
+#define POSTDIVPD r0
+turn_on_post_dividers : 
+    set_bit POSTDIVPD, 3
+    str POSTDIVPD, [pll_sys_clr_base, #PLL_SYS_PWR_OFFSET]
+#undef POSTDIVPD
+
+#undef pll_sys_base
+#undef pll_sys_clr_base
+// @-----------------------------------------------------------------------------------------------------------------------------------
+#define clk_base r7
+#define clk_sys_ctrl1 r1
+#define clk_sys_ctrl0 r0
+switch_to_pll_sys :
+    ldr clk_base, =CLK_BASE
+    mov clk_sys_ctrl0, #1 // clksrc_clk_sys_aux
+    str clk_sys_ctrl0, [clk_base, #0x3C]
+#undef clk_base
+#undef clk_sys_ctrl1
+#undef clk_sys_ctrl0
+
+#endif // disable_pll_sys
+// @-----------------------------------------------------------------------------------------------------------------------------------
+    deassert_peri_reset r7, r0, r1, 5 // enable iobank 0
+// @-----------------------------------------------------------------------------------------------------------------------------------
+#define io_bank0_base r7
+#define gpio_funcsel r0 
+    ldr io_bank0_base, =IO_BANK0_BASE
+    mov gpio_funcsel, #GPIO_FUNCSEL_PIO0
+
+gpio0_configure : // swdclk
+    str gpio_funcsel, [io_bank0_base, #GPIO0_CTRL_OFFSET]
+
+gpio1_configure :  // swdio
+    str gpio_funcsel, [io_bank0_base, #GPIO1_CTRL_OFFSET]
+
+#undef io_bank0_base
+#undef gpio_funcsel
+
+// @-----------------------------------------------------------------------------------------------------------------------------------
+    deassert_peri_reset r7, r0, r1, 10 // enable pio 0
 
     // load 32(always) pio instructions from SRAM5
     // and store it in PIO0 instruction buffer
@@ -191,104 +183,198 @@ load_pio0_instructions :
     str r1, [r3]
 
     add r2, r2, #2 
-    add r3, r3, #4 // instruction buffer has 4byte stride
-
+    add r3, r3, #4 // instruction buffer has 4byte stride in address space
     sub r4, #1
     bne load_pio0_instructions
 
-init_pio_sm0 : 
-/*
-    // change sm0 clock divisor
-    ldr r2, =PIO_SM0_CLKDIV 
-    mov r1, #1
-    lsl r1, r1, #16
-    str r1, [r2]
-*/
+// @-----------------------------------------------------------------------------------------------------------------------------------
+// sm0 - swd clk 
+#define sm0_base r7
+    ldr sm0_base, =SM0_BASE
 
-    // make GPIO0 to be controllable by the PIO,
-    // and set the direction to be output
-    ldr r2, =GPIO0_CTRL_RW
-    // mov r1, #0x3
-    // lsl r1, r1, #12
-    // mov r3, #6 
-    // orr r1, r1, r3
-    mov r1, #6
-    str r1, [r2]
+#define wrap_top r0
+#define wrap_bottom r1
+configure_sm0_execctrl : 
+    mov wrap_top, #2 
+    lsl wrap_top, #12
+    mov wrap_bottom, #1 
+    lsl wrap_bottom, #7
+    orr wrap_top, wrap_bottom
+    str wrap_top, [sm0_base, #SM_EXECCTRL_OFFSET]
+#undef wrap_top
+#undef wrap_bottom
 
-    // change the wrapping address
-    // the numbers are per pio instruction(31 == last pio instruction in buffer)
-    ldr r2, =PIO_SM0_EXECCTRL
-    mov r1, #2 // wrap_top
-    lsl r1, r1, #12
-    mov r3, #1 // wrap_bottom
-    lsl r3, r3, #7
-    orr r1, r1, r3 
-    str r1, [r2]
+#define sm0_set_base 
+#define s r0
+configure_sm0_pinctrl : 
+#undef s
 
+#define pc r0
+configure_sm0_instr : 
     // move the program counter of SM0
-    mov r1, #0
-    ldr r2, =PIO_SM0_INSTR
-    str r1, [r2]
+    mov pc, #0
+    str pc, [sm0_base, #SM_INSTR_OFFSET]
+#undef pc 
 
-    // TODO(gh) just a debug, move this somewhere else
-    // pre-populate GPIO addresses
-    ldr r3, =SIO_GPIO_OUT_SET
-    ldr r4, =SIO_GPIO_OUT_CLR
-    ldr r5, =SIO_GPIO_OUT_RW
-    mov r0, #1
-    lsl r0, r0, #2
+#undef sm0_base
+// @-----------------------------------------------------------------------------------------------------------------------------------
+// sm1 - swd dio + clk for read / write loop
 
-    // start the SM0
-    mov r1, #1
-    ldr r2, =PIO0_CTRL
-    str r1, [r2]
+#define sm1_base r7
+    ldr sm1_base, =SM1_BASE
 
-    nop // debug, for sm0 set pindirs
-change_gpio_2 : 
-    // ldr r0, [r5]
-    // lsl r0, r0, #2
-    str r0, [r5]
-    b change_gpio_2
+#define wrap_top r0
+#define wrap_bottom r1
+configure_sm1_execctrl : 
+    mov wrap_top, #2 
+    lsl wrap_top, #12
+    mov wrap_bottom, #1 
+    lsl wrap_bottom, #7
+    orr wrap_top, wrap_bottom
+    str wrap_top, [sm1_base, #SM_EXECCTRL_OFFSET]
+#undef wrap_top
+#undef wrap_bottom
 
-    /*
+#define sm1_set_base r6
+#define s r0
+configure_sm1_pinctrl : 
+    ldr sm1_set_base, =SM1_SET_BASE
+    mov s, #1
+    lsl s, #SM_PINCTRL_OUT_BASE_SHIFT
+    str s, [sm1_set_base, #SM_PINCTRL_OFFSET]
+
+    mov s, #1
+    lsl s, #SM_PINCTRL_IN_BASE_SHIFT
+    str s, [sm1_set_base, #SM_PINCTRL_OFFSET]
+
+    mov s, #1
+    lsl s, #SM_PINCTRL_OUT_COUNT_SHIFT
+    str s, [sm1_set_base, #SM_PINCTRL_OFFSET]
+
+    mov s, #2
+    lsl s, #SM_PINCTRL_SET_COUNT_SHIFT
+    str s, [sm1_set_base, #SM_PINCTRL_OFFSET]
+
+    mov s, #1
+    lsl s, #SM_PINCTRL_SIDESET_COUNT_SHIFT
+    str s, [sm1_set_base, #SM_PINCTRL_OFFSET]
+#undef s
+#undef sm1_set_base
+
+#define pc r0
+configure_sm1_instr : 
+    // move the program counter of SM0
+    mov pc, #0
+    str pc, [sm1_base, #SM_INSTR_OFFSET]
+#undef pc 
+
+#undef sm1_base
+
+// @-----------------------------------------------------------------------------------------------------------------------------------
+#define pio0_base r7
+    ldr pio0_base, =PIO0_BASE
+
+#define sm_enable r0
+start_sms : 
+    mov sm_enable, #3
+    str sm_enable, [pio0_base, #PIO0_CTRL_OFFSET]
+#undef sm_enable
     
-    mov r0, #1
-    lsl r0, r0, #25 // GPIO 25 bit
-disable_gpio_25 :
-    ldr r2, =SIO_GPIO_OE_CLR
-    str r0, [r2] // disable output for gpio 25
-    ldr r2, =SIO_GPIO_OUT_CLR
-    str r0, [r2] // turn off gpio 25 
+#if 0
+    ldr r2, =PIO_SM0_TXF
+    mov r1, #0b10101010
+    str r1, [r2]
+#endif
 
-change_gpio_25_function :
-    ldr r2, =GPIO25_CTRL_RW
-    mov r1, #GPIO_FUNCSEL_SIO
-    str r1, [r2] // gpio 25 funtion = 5(SIO)
+#undef pio0_base
 
-enable_gpio_25 :
-    ldr r2, =SIO_GPIO_OE_SET
-    str r0, [r2]
+// @-----------------------------------------------------------------------------------------------------------------------------------
 
+#if 1
+#define sio_gpio_oe_clr_reg r7
+#define sio_gpio_out_clr_reg r6
+#define bit2 r0
+    mov bit2, #1
+    lsl bit2, #2
+disable_gpio2 :
+    ldr sio_gpio_oe_clr_reg, =SIO_GPIO_OE_CLR
+    str bit2, [sio_gpio_oe_clr_reg]
+    ldr sio_gpio_out_clr_reg, =SIO_GPIO_OUT_CLR
+    str bit2, [sio_gpio_out_clr_reg]
+#undef bit2
+#undef sio_gpio_oe_clr_reg
+#undef sio_gpio_out_clr_reg
+
+#define io_bank0_base r7
+#define funcsel r0
+change_gpio2_function : 
+    ldr io_bank0_base, =IO_BANK0_BASE
+    mov funcsel, #GPIO_FUNCSEL_SIO
+    str funcsel, [io_bank0_base, #GPIO2_CTRL_OFFSET]
+#undef io_bank0_base
+#undef funcsel
+
+#define sio_gpio_oe_set_reg r7
+#define bit2 r0
+enable_gpio2 : 
+    ldr sio_gpio_oe_set_reg, =SIO_GPIO_OE_SET
+    mov bit2, #1
+    lsl bit2, #2
+    str bit2, [sio_gpio_oe_set_reg]
+#undef sio_gpio_oe_set_reg
+#undef bit2
+
+#define sio_gpio_out_set_reg r7
+#define sio_gpio_out_clr_reg r6
+#define bit2 r0
     // pre-populate addresses for the LED
-    ldr r2, =SIO_GPIO_OUT_SET
-    ldr r3, =SIO_GPIO_OUT_CLR
-    mov r4, #1 // iter
-    lsl r4, r4, #14
-loop_led_on : 
-    str r0, [r2] // set GPIO 25
-    sub r4, #1
-    bne loop_led_on
-    mov r4, #1 // iter
-    lsl r4, r4, #18   
+    ldr sio_gpio_out_set_reg, =SIO_GPIO_OUT_SET
+    ldr sio_gpio_out_clr_reg, =SIO_GPIO_OUT_CLR
+    mov bit2, #1
+    lsl bit2, #2
 
-loop_led_off:
-    str r0, [r3] // clear GPIO 25
-    sub r4, #1
-    bne loop_led_off
-    mov r4, #1 // iter
-    lsl r4, r4, #18   
-    b loop_led_on
-    */
+    // TODO(gh) why am I getting 45-55 duty cycle for this?
+loop_gpio2 :
+    str bit2, [sio_gpio_out_set_reg]
+    str bit2, [sio_gpio_out_clr_reg]
+
+    str bit2, [sio_gpio_out_set_reg]
+    str bit2, [sio_gpio_out_clr_reg]
+
+    str bit2, [sio_gpio_out_set_reg]
+    str bit2, [sio_gpio_out_clr_reg]
+
+    str bit2, [sio_gpio_out_set_reg]
+    str bit2, [sio_gpio_out_clr_reg]
+
+    str bit2, [sio_gpio_out_set_reg]
+    str bit2, [sio_gpio_out_clr_reg]
+
+    str bit2, [sio_gpio_out_set_reg]
+    str bit2, [sio_gpio_out_clr_reg]
+
+    str bit2, [sio_gpio_out_set_reg]
+    str bit2, [sio_gpio_out_clr_reg]
+
+    str bit2, [sio_gpio_out_set_reg]
+    str bit2, [sio_gpio_out_clr_reg]
+
+    str bit2, [sio_gpio_out_set_reg]
+    str bit2, [sio_gpio_out_clr_reg]
+
+    str bit2, [sio_gpio_out_set_reg]
+    str bit2, [sio_gpio_out_clr_reg]
+
+    str bit2, [sio_gpio_out_set_reg]
+    str bit2, [sio_gpio_out_clr_reg]
+
+    b loop_gpio2
+#endif
+#undef bit2
+#undef sio_gpio_out_set_reg
+#undef sio_gpio_out_clr_reg
+
+// @-----------------------------------------------------------------------------------------------------------------------------------
 
     
 
