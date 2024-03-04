@@ -112,13 +112,12 @@ loop_wait_for_read_write :
 // @-----------------------------------------------------------------------------------------------------------------------------------
 //     ___    
 // ___/   \___
-// spp   s  om
-// PP       NN 
+// sps   p 
+// PP        
 
 pre_write_turnaround : 
-    pull block side 1 [2]
-    set pindirs, 0b11 side 0 [1] 
-
+    set pindirs, 0b11 side 1 [2] 
+    pull block side 0 [1]
 
 // @-----------------------------------------------------------------------------------------------------------------------------------
 //     ___  
@@ -130,6 +129,9 @@ loop_write32 :
     mov x, null side 1 [2] 
     mov x, null side 0
     jmp y--, loop_write32 side 0 
+
+    set pins, 0 side 0 // TODO(gh) not essential, mainly just to lower down the data line if it ended up being high
+    // set pindirs, 0 side 1 // TODO(gh) why doesn't this work?
     jmp wait_fifo side 0
 
 // @-----------------------------------------------------------------------------------------------------------------------------------

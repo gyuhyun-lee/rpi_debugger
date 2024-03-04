@@ -347,22 +347,39 @@ pull_ack :
 // TODO(gh) test ack
 #undef ack
 
+#if 1
 // read_test
 #define sm0_base r6
 #define pc r0
 move_sm0_pc : 
     ldr sm0_base, =SM0_BASE
-    mov pc, #25 // TODO(gh) there gotta be a better way ... 
+    mov pc, #26 // TODO(gh) there gotta be a better way ... 
+    str pc, [sm0_base, #SM_INSTR_OFFSET]
+#undef pc
+#undef sm0_base
+#else
+
+// write test
+
+#define data r1
+push_data : 
+    ldr data, =0xaaaaaaaa
+    str data, [pio0_base, #SM0_TXFIFO_OFFSET]
+#undef data
+
+#define sm0_base r6
+#define pc r0
+move_sm0_pc : 
+    ldr sm0_base, =SM0_BASE
+    mov pc, #18 // TODO(gh) there gotta be a better way ... 
     str pc, [sm0_base, #SM_INSTR_OFFSET]
 #undef pc
 #undef sm0_base
 
+#endif
+
 #if 0
-#define data r1
-push_data : 
-    ldr data, =0xdcdcdcdc
-    str data, [pio0_base, #SM0_TXFIFO_OFFSET]
-#undef data
+
 #endif
 #endif
 
