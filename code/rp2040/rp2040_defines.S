@@ -93,20 +93,25 @@
 .equ IO_BANK0_INTE0, (IO_BANK0_BASE + 0x100)
 
 /*PIO*/
-.equ PIO0_BASE, 0x50200000
+.equ PIO0_BASE, (0x50200000)
+.equ PIO0_XOR_BASE, (PIO0_BASE + 0x1000)
+.equ PIO0_SET_BASE, (PIO0_BASE + 0x2000)
+.equ PIO0_CLR_BASE, (PIO0_BASE + 0x3000)
 
 .equ PIO0_CTRL_OFFSET, (0x0)
 .equ PIO0_FSTAT_OFFSET, (0x4)
 .equ PIO0_FDEBUG_OFFSET, (0x8)
 .equ PIO0_FLEVEL_OFFSET, (0xc)
-.equ PIO0_TXF0_OFFSET, (0x10)
-.equ PIO0_TXF1_OFFSET, (0x14)
-.equ PIO0_TXF2_OFFSET, (0x18)
-.equ PIO0_TXF3_OFFSET, (0x1c)
-.equ PIO0_RXF0_OFFSET, (0x20)
-.equ PIO0_RXF1_OFFSET, (0x24)
-.equ PIO0_RXF2_OFFSET, (0x28)
-.equ PIO0_RXF3_OFFSET, (0x2c)
+
+.equ SM0_TXFIFO_OFFSET, (0x10)
+.equ SM1_TXFIFO_OFFSET, (0x14)
+.equ SM2_TXFIFO_OFFSET, (0x18)
+.equ SM3_TXFIFO_OFFSET, (0x1c)
+.equ SM0_RXFIFO_OFFSET, (0x20)
+.equ SM1_RXFIFO_OFFSET, (0x24)
+.equ SM2_RXFIFO_OFFSET, (0x28)
+.equ SM3_RXFIFO_OFFSET, (0x2c)
+
 .equ PIO0_IRQ_OFFSET, (0x30)
 .equ PIO0_IRQ_FORCE_OFFSET, (0x34)
 .equ PIO0_INPUT_SYNC_BYPASS_OFFSET, (0x38)
@@ -115,7 +120,8 @@
 .equ PIO0_DBG_CFGINFO_OFFSET, (0x44)
 
 // although each 'slot' is 4 bytes in the address space, each 'instruction' is 2 bytes
-.equ PIO0_INSTR_MEM_START, (PIO0_BASE + 0x048) 
+.equ PIO0_INSTR_MEM_START_OFFSET, (0x048)
+.equ PIO0_INSTR_MEM_START, (PIO0_BASE + PIO0_INSTR_MEM_START_OFFSET) 
 // user-defined PIO instruction location inside SRAM. At startup, debug probe should load & store the instructions
 // from here to PIO0_INSTR_MEM_START
 .equ PIO0_INSTR_MEM_SRARM_START, 0x20040000 // sram bank 4 for now 

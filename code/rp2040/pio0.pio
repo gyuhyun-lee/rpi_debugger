@@ -3,62 +3,111 @@
     GPIO 0 = CLK
     GPIO 1 = DIO
 
-          base  count
-    out    1      1
-    in     1      1
-    set    0      1 (cannot be 2, we have to preserve the DIO line)
-    s-s    0      1
+            base              count
+    out     1(DIO)              1
+    in      1(DIO)              1
+    set     1(DIO)              1 (cannot be 2, we have to preserve the DIO line)
+    s-s     0(CLK)              1
+
+    GPIO 0 = DIO
+    GPIO 1 = CLK
+            base              count
+    out     0(DIO)              1
+    in      0(DIO)              1
+    set     0(DIO)              2->1 (cannot be 2, we have to preserve the DIO line)
+    s-s     1(CLK)              1
 
     TODO(gh) for now I'm using mov x, null to change the clk line, but we might wanna find something else
     if we wanna use the x register
 */
 
+
 .side_set 1 // for swdclk
+
+/*
+sideset_test : 
+    set pins, 1 side 1
+    set pins, 0 side 0
+
+    set pins, 1 side 1
+    set pins, 0 side 0
+
+    set pins, 1 side 1
+    set pins, 0 side 0
+
+    set pins, 1 side 1
+    set pins, 0 side 0
+
+    set pins, 1 side 1
+    set pins, 0 side 0
+
+    set pins, 1 side 1
+    set pins, 0 side 0
+
+    set pins, 1 side 1
+    set pins, 0 side 0
+
+    set pins, 1 side 1
+    set pins, 0 side 0
+
+    set pins, 1 side 1
+    set pins, 0 side 0
+
+    set pins, 1 side 1
+    set pins, 0 side 0
+
+    set pins, 1 side 1
+    set pins, 0 side 0
+*/
 
 // @-----------------------------------------------------------------------------------------------------------------------------------
 //       ___        
-// _____/   \___   
-// pssom  om j                      
+// _____/   \___
+// pssom   j                      
 
 wait_fifo : 
     pull block side 0 // wait until there's something inside the tx fifo
-    set pindirs, 1 side 0 
+    set pindirs, 0b11 side 0 
 
 send_header_start :
     set y, 7 side 0
     // TODO(gh) make the other sm to generate the square wave 
 loop_header : 
     out pins, 1 side 0
-    mov x, null side 1 [1]
-    out pins, 1 side 1 
-    mov x, null side 0
-    jmp y--, loop_header side 0  
+    mov x, null side 1 [2]
+    jmp y--, loop_header side 0 [1]
+
 
 // @-----------------------------------------------------------------------------------------------------------------------------------
 //     ___     
-// ___/   \___
-// jsm   m               
-// P         
+// ___/   \___   
+//  ms   m               
+//           
 
-turnaround :  // also consumes the OK bit from ACK 
-    set pindirs, 0 side 0
-    mov x, null side 1 [2]
+turnaround :  
+    mov x, null side 0 // spend extra cycle in swdclk 0
+    set pindirs, 0b10 side 1 [2]
     mov x, null side 0 [2]
 
 // @-----------------------------------------------------------------------------------------------------------------------------------
-//     ___     ___     
-// ___/   \___/   \___
-//   i   m   i   m sp   
+//     ___     ___     ___
+// ___/   \___/   \___/   \___
+//   i   m   i   m   i   m sp   
 
 get_ack :
-    in pins, 1 side 1 [5] // wait bit
+    in pins, 1 side 1 [2] // ok bit
+    mov x, null side 0 [2]
+    in pins, 1 side 1 [2] // wait bit
     mov x, null side 0 [2]
     in pins, 1 side 1 [2] // fault bit
     mov x, null side 0
 
     // pre-populate the iterator for read32/write32 routine
     set y, 31 side 0 
-    push iffull side 0 
+    push block side 0 
+
+loop_wait_for_read_write : 
+    jmp loop_wait_for_read_write side 0
 
 // @-----------------------------------------------------------------------------------------------------------------------------------
 //     ___    
@@ -67,8 +116,9 @@ get_ack :
 // PP       NN 
 
 pre_write_turnaround : 
-    pull noblock side 1 [2]
-    set pindirs, 1 side 0 [1] 
+    pull block side 1 [2]
+    set pindirs, 0b11 side 0 [1] 
+
 
 // @-----------------------------------------------------------------------------------------------------------------------------------
 //     ___  
@@ -101,9 +151,10 @@ loop_read32:
 //  P
 
 post_read_turnaround_and_push :  
-    push iffull side 1 [2]
+    push block side 1 [2]
     jmp wait_fifo side 0 // TODO(gh) we probably don't need delay here?
 
 // @-----------------------------------------------------------------------------------------------------------------------------------
 
-
+/*
+*/

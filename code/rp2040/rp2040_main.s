@@ -4,12 +4,19 @@
 .include "rp2040_defines.S"
 
 .macro set_bit, reg, bit_pos
+set_bit\@ :
     mov \reg, #1
     lsl \reg, #\bit_pos
 .endm
 
-.macro deassert_peri_reset, reg_address, reg0, reg1, bit_pos
+.macro delay, iter, cycle_count
+    mov \iter, #\cycle_count
+loop_delay\@ :
+    sub \iter, #1
+    bne loop_delay\@
+.endm
 
+.macro deassert_peri_reset, reg_address, reg0, reg1, bit_pos
 deassert_peri\@: 
     ldr \reg_address, =RESETS_RESET_CLR
     mov \reg0, #1
@@ -23,8 +30,23 @@ loop_deassert_done\@ :
     beq loop_deassert_done\@
 .endm
 
+// each bits in enable_bits mean sm0 - sm3
+.macro enable_sms pio0_set_base, enable_reg, enable_bits
+    ldr \pio0_set_base, =PIO0_SET_BASE
+enable_sms\@ : 
+    mov \enable_reg, #\enable_bits
+    str \enable_reg, [\pio0_set_base, #PIO0_CTRL_OFFSET]
+.endm
+
+.macro disable_sms pio0_clr_base, disable_reg, disable_bits
+    ldr \pio0_clr_base, =PIO0_CLR_BASE
+disable_sms\@ : 
+    mov \disable_reg, #\disable_bits
+    str \disable_reg, [\pio0_clr_base, #PIO0_CTRL_OFFSET]
+.endm
+
 // gnu entry point
-.globl _start
+.global _start
 _start:
 
 // @-----------------------------------------------------------------------------------------------------------------------------------
@@ -159,10 +181,10 @@ switch_to_pll_sys :
     ldr io_bank0_base, =IO_BANK0_BASE
     mov gpio_funcsel, #GPIO_FUNCSEL_PIO0
 
-gpio0_configure : // swdclk
+gpio0_configure : // swdio
     str gpio_funcsel, [io_bank0_base, #GPIO0_CTRL_OFFSET]
 
-gpio1_configure :  // swdio
+gpio1_configure :  // swdclk
     str gpio_funcsel, [io_bank0_base, #GPIO1_CTRL_OFFSET]
 
 #undef io_bank0_base
@@ -171,126 +193,185 @@ gpio1_configure :  // swdio
 // @-----------------------------------------------------------------------------------------------------------------------------------
     deassert_peri_reset r7, r0, r1, 10 // enable pio 0
 
+// @-----------------------------------------------------------------------------------------------------------------------------------
+config_pio_output_direction_mask :
+
+#define pio0_base r7
+#define inst_B0 r0
+#define inst_B1 r1
+store_set_pindir_instruction : // set both dio & clk to be output
+    ldr pio0_base, =PIO0_BASE
+    mov inst_B1, #0xe0
+    lsl inst_B1, #8
+    mov inst_B0, #0x83
+    orr inst_B1, inst_B0
+    str inst_B1, [pio0_base, #PIO0_INSTR_MEM_START_OFFSET]
+#undef inst_B0
+#undef inst_B1
+#undef pio0_base
+
+#define pio0_set_base r7
+#define enable_reg r0
+    enable_sms pio0_set_base, enable_reg, 1
+#undef enable_reg
+#undef pio0_set_base 
+
+    // should be enough time to set the direction
+#define iter r0
+    delay iter, 32
+#undef iter
+    
+#define pio0_clr_base r7
+#define disable_reg r0
+    disable_sms pio0_clr_base, disable_reg, 1
+#undef disable_reg
+#undef pio0_clr_base
+
+// @-----------------------------------------------------------------------------------------------------------------------------------
+#define src_addr r7 // SRAM 
+#define dest_addr r6 // PIO instruction buffer
+#define iter r0
+#define inst r1
+
+load_pio0_instructions :
     // load 32(always) pio instructions from SRAM5
     // and store it in PIO0 instruction buffer
-    mov r4, #32
-    ldr r2, =PIO0_INSTR_MEM_SRARM_START
-    ldr r3, =PIO0_INSTR_MEM_START
-load_pio0_instructions :
-    // TODO(gh) find out what happens to the bus
-    // when we load a 16-bit value
-    ldrh r1, [r2]
-    str r1, [r3]
+    mov iter, #32
+    ldr src_addr, =PIO0_INSTR_MEM_SRARM_START
+    ldr dest_addr, =PIO0_INSTR_MEM_START
+loop_load_pio0_instructions :
+    ldrh inst, [src_addr]
+    str inst, [dest_addr]
 
-    add r2, r2, #2 
-    add r3, r3, #4 // instruction buffer has 4byte stride in address space
-    sub r4, #1
-    bne load_pio0_instructions
+    add src_addr, #2 
+    add dest_addr, #4 // instruction buffer has 4byte stride in address space
+    sub iter, #1
+    bne loop_load_pio0_instructions
 
+#undef src_addr  
+#undef dest_addr 
+#undef iter 
+#undef inst 
+     
 // @-----------------------------------------------------------------------------------------------------------------------------------
-// sm0 - swd clk 
-#define sm0_base r7
-    ldr sm0_base, =SM0_BASE
+// configure sm0 to be swdclk + swdio
 
-#define wrap_top r0
-#define wrap_bottom r1
-configure_sm0_execctrl : 
-    mov wrap_top, #2 
-    lsl wrap_top, #12
-    mov wrap_bottom, #1 
-    lsl wrap_bottom, #7
-    orr wrap_top, wrap_bottom
-    str wrap_top, [sm0_base, #SM_EXECCTRL_OFFSET]
-#undef wrap_top
-#undef wrap_bottom
-
-#define sm0_set_base 
+#define sm0_set_base r6
 #define s r0
 configure_sm0_pinctrl : 
-#undef s
+    ldr sm0_set_base, =SM0_SET_BASE
 
-#define pc r0
-configure_sm0_instr : 
-    // move the program counter of SM0
-    mov pc, #0
-    str pc, [sm0_base, #SM_INSTR_OFFSET]
-#undef pc 
-
-#undef sm0_base
-// @-----------------------------------------------------------------------------------------------------------------------------------
-// sm1 - swd dio + clk for read / write loop
-
-#define sm1_base r7
-    ldr sm1_base, =SM1_BASE
-
-#define wrap_top r0
-#define wrap_bottom r1
-configure_sm1_execctrl : 
-    mov wrap_top, #2 
-    lsl wrap_top, #12
-    mov wrap_bottom, #1 
-    lsl wrap_bottom, #7
-    orr wrap_top, wrap_bottom
-    str wrap_top, [sm1_base, #SM_EXECCTRL_OFFSET]
-#undef wrap_top
-#undef wrap_bottom
-
-#define sm1_set_base r6
-#define s r0
-configure_sm1_pinctrl : 
-    ldr sm1_set_base, =SM1_SET_BASE
-    mov s, #1
+#if 0
+    mov s, #0
     lsl s, #SM_PINCTRL_OUT_BASE_SHIFT
-    str s, [sm1_set_base, #SM_PINCTRL_OFFSET]
+    str s, [sm0_set_base, #SM_PINCTRL_OFFSET]
+
+    mov s, #0
+    lsl s, #SM_PINCTRL_SET_BASE_SHIFT
+    str s, [sm0_set_base, #SM_PINCTRL_OFFSET]
+#endif
 
     mov s, #1
+    lsl s, #SM_PINCTRL_SIDESET_BASE_SHIFT
+    str s, [sm0_set_base, #SM_PINCTRL_OFFSET]
+
+#if 0
+    mov s, #0
     lsl s, #SM_PINCTRL_IN_BASE_SHIFT
-    str s, [sm1_set_base, #SM_PINCTRL_OFFSET]
+    str s, [sm0_set_base, #SM_PINCTRL_OFFSET]
+#endif
 
     mov s, #1
     lsl s, #SM_PINCTRL_OUT_COUNT_SHIFT
-    str s, [sm1_set_base, #SM_PINCTRL_OFFSET]
+    str s, [sm0_set_base, #SM_PINCTRL_OFFSET]
 
-    mov s, #2
+    mov s, #1
     lsl s, #SM_PINCTRL_SET_COUNT_SHIFT
-    str s, [sm1_set_base, #SM_PINCTRL_OFFSET]
+    str s, [sm0_set_base, #SM_PINCTRL_OFFSET]
 
     mov s, #1
     lsl s, #SM_PINCTRL_SIDESET_COUNT_SHIFT
-    str s, [sm1_set_base, #SM_PINCTRL_OFFSET]
+    str s, [sm0_set_base, #SM_PINCTRL_OFFSET]
 #undef s
-#undef sm1_set_base
+#undef sm0_set_base
 
+#define sm0_base r7
 #define pc r0
-configure_sm1_instr : 
-    // move the program counter of SM0
+configure_sm0_instr : 
+    ldr sm0_base, =SM0_BASE
+    // initialize the program counter
     mov pc, #0
-    str pc, [sm1_base, #SM_INSTR_OFFSET]
+    str pc, [sm0_base, #SM_INSTR_OFFSET]
 #undef pc 
-
-#undef sm1_base
+#undef sm0_base
 
 // @-----------------------------------------------------------------------------------------------------------------------------------
+// start sm
+
+#define pio0_set_base r7
+#define enable_reg r0
+    enable_sms pio0_set_base, enable_reg, 1
+#undef pio0_set_base
+#undef enable_reg
+
+// @-----------------------------------------------------------------------------------------------------------------------------------
+
+// TEST(gh) set arbitrary header + 32 bit 
+// and test read-write routine
+
 #define pio0_base r7
     ldr pio0_base, =PIO0_BASE
 
-#define sm_enable r0
-start_sms : 
-    mov sm_enable, #3
-    str sm_enable, [pio0_base, #PIO0_CTRL_OFFSET]
-#undef sm_enable
-    
+#define header r0 // IMPORTANT(gh) need to preserve this register for retry!
+push_header : 
+    mov header, #0b01010101
+    str header, [pio0_base, #SM0_TXFIFO_OFFSET]
+#undef header 
+
+#if 1
+
+#define rxempty_test_bit r1
+#define pio0_fstat r2
+wait_for_ack : 
+    set_bit rxempty_test_bit, 8
+loop_wait_for_ack : 
+    ldr pio0_fstat, [pio0_base, #PIO0_FSTAT_OFFSET] 
+    tst rxempty_test_bit, pio0_fstat // 1 == FIFO empty
+    bne loop_wait_for_ack // TODO(gh) this doesn't work
+#undef pio0_fstat
+#undef rxempty_test_bit
+
+#define ack r1
+pull_ack :
+    ldr ack, [pio0_base, #SM0_RXFIFO_OFFSET]
+// TODO(gh) test ack
+#undef ack
+
+// read_test
+#define sm0_base r6
+#define pc r0
+move_sm0_pc : 
+    ldr sm0_base, =SM0_BASE
+    mov pc, #25 // TODO(gh) there gotta be a better way ... 
+    str pc, [sm0_base, #SM_INSTR_OFFSET]
+#undef pc
+#undef sm0_base
+
 #if 0
-    ldr r2, =PIO_SM0_TXF
-    mov r1, #0b10101010
-    str r1, [r2]
+#define data r1
+push_data : 
+    ldr data, =0xdcdcdcdc
+    str data, [pio0_base, #SM0_TXFIFO_OFFSET]
+#undef data
+#endif
 #endif
 
 #undef pio0_base
 
+
 // @-----------------------------------------------------------------------------------------------------------------------------------
 
-#if 1
+#if 0
 #define sio_gpio_oe_clr_reg r7
 #define sio_gpio_out_clr_reg r6
 #define bit2 r0
@@ -369,12 +450,12 @@ loop_gpio2 :
     str bit2, [sio_gpio_out_clr_reg]
 
     b loop_gpio2
-#endif
 #undef bit2
 #undef sio_gpio_out_set_reg
 #undef sio_gpio_out_clr_reg
 
 // @-----------------------------------------------------------------------------------------------------------------------------------
+#endif
 
     
 

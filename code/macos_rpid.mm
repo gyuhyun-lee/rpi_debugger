@@ -469,7 +469,7 @@ raw_usb_device_added(void *refCon, io_iterator_t io_iter)
             if ((*usb_device)->USBDeviceOpenSeize(usb_device) != kIOReturnSuccess)
             {
                 printf("unable to open the USB device with an exclusive access\n");
-                (*usb_device)->Release(usb_device);
+                (*usb_device)->Release(usb_device);SHIFTCTRL_OUT_SHIFTDIR
 
                 // TODO(gh) log
                 assert(0);
