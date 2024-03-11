@@ -1,5 +1,5 @@
 MAKEFLAGS += --silent
-TARGET_CPU = -mcpu=cortex-m0
+TARGET_CPU = -mcpu=cortex-m0plus -mthumb
 
 ASSEMBLER_FLAGS = $(TARGET_CPU)
 COMPILER_FLAGS = -Wall -O2 -nostdlib -nostartfiles -ffreestanding -ggdb -g0 $(TARGET_CPU)

@@ -1,4 +1,5 @@
 .program swd
+.side_set 1 // for swdclk
 /*
     GPIO 0 = CLK
     GPIO 1 = DIO
@@ -21,48 +22,9 @@
     if we wanna use the x register
 */
 
-
-.side_set 1 // for swdclk
-
-/*
-sideset_test : 
-    set pins, 1 side 1
-    set pins, 0 side 0
-
-    set pins, 1 side 1
-    set pins, 0 side 0
-
-    set pins, 1 side 1
-    set pins, 0 side 0
-
-    set pins, 1 side 1
-    set pins, 0 side 0
-
-    set pins, 1 side 1
-    set pins, 0 side 0
-
-    set pins, 1 side 1
-    set pins, 0 side 0
-
-    set pins, 1 side 1
-    set pins, 0 side 0
-
-    set pins, 1 side 1
-    set pins, 0 side 0
-
-    set pins, 1 side 1
-    set pins, 0 side 0
-
-    set pins, 1 side 1
-    set pins, 0 side 0
-
-    set pins, 1 side 1
-    set pins, 0 side 0
-*/
-
 // @-----------------------------------------------------------------------------------------------------------------------------------
 //       ___        
-// _____/   \___
+// _____|   |___
 // pssom   j                      
 
 wait_fifo : 
@@ -73,26 +35,26 @@ send_header_start :
     set y, 7 side 0
     // TODO(gh) make the other sm to generate the square wave 
 loop_header : 
-    out pins, 1 side 0
+    out pins, 1 side 0 // no autopull
     mov x, null side 1 [2]
     jmp y--, loop_header side 0 [1]
 
 
 // @-----------------------------------------------------------------------------------------------------------------------------------
 //     ___     
-// ___/   \___   
-//  ms   m               
-//           
+// ___|   |___   
+//  ms   m   i           
+//           N
 
 turnaround :  
     mov x, null side 0 // spend extra cycle in swdclk 0
-    set pindirs, 0b10 side 1 [2]
+    set pindirs, 0b10 side 1 [2] // tri-state the DIO line
     mov x, null side 0 [2]
 
 // @-----------------------------------------------------------------------------------------------------------------------------------
 //     ___     ___     ___
-// ___/   \___/   \___/   \___
-//   i   m   i   m   i   m sp   
+// ___|   |___|   |___|   |___
+//   i   m   i   m   i   m spL   
 
 get_ack :
     in pins, 1 side 1 [2] // ok bit
@@ -104,59 +66,74 @@ get_ack :
 
     // pre-populate the iterator for read32/write32 routine
     set y, 31 side 0 
-    push block side 0 
+    push block side 0  // also resets the input bit count
 
+    // wait for the core to move the PC 
 loop_wait_for_read_write : 
     jmp loop_wait_for_read_write side 0
 
 // @-----------------------------------------------------------------------------------------------------------------------------------
 //     ___    
-// ___/   \___
+// ___|   |___
 // sps   p 
 // PP        
+// set pindirs, 0b11 side 1 [2] // TODO(gh) might not work, if the DIO should be tri-stated during the turnaround cycle
+// pull block side 0 [1]
+
+// or, if the DIO should be tri-stated,  
+//     ___    
+// ___|   |___
+// spp   m  os
+// PP       NN
+// pull block side 1 [2]
+// mov x, null side 0 [2] 
+// out pins, 1 side 0 
+// set pindirs, 0b11, side 1
 
 pre_write_turnaround : 
-    set pindirs, 0b11 side 1 [2] 
-    pull block side 0 [1]
+    pull block side 1 [2] // REQUIRED, this resets the out bitcount
+    mov x, null side 0 [1] 
 
 // @-----------------------------------------------------------------------------------------------------------------------------------
 //     ___  
-// ___/   \___ x 32
-//  om   m j
+// ___|   |___ x 32
+//  os   m j
 
 loop_write32 :
     out pins, 1 side 0 
-    mov x, null side 1 [2] 
+    set pindirs, 0b11 side 1 [2] // mov x, null side 1 [2]  // 
     mov x, null side 0
     jmp y--, loop_write32 side 0 
 
-    set pins, 0 side 0 // TODO(gh) not essential, mainly just to lower down the data line if it ended up being high
-    // set pindirs, 0 side 1 // TODO(gh) why doesn't this work?
+// @-----------------------------------------------------------------------------------------------------------------------------------
+//     ___  
+// ___|   |___ 
+// j o   s   j
+// P
+post_write_parity : 
+    out pins, 1 side 1 [2] // will autopull from the FIFO
+    set pindirs, 0b10 side 0 [2] // tri-state dio // TODO(gh) delay is probablly not necessary here
     jmp wait_fifo side 0
 
 // @-----------------------------------------------------------------------------------------------------------------------------------
 //     ___            
-// ___/   \___ x 32
+// ___|   |___ x 32
 //  pi   m  ji
 //  P                   
 // pin direction is implied to be 0, as the previous stage is ack input
 
 loop_read32: 
-    in pins, 1 side 1 [2]  
+    in pins, 1 side 1 [2] // will autopush at the end(32bits)
     mov x, null side 0[1]
     jmp y--, loop_read32 side 0 
 
 // @-----------------------------------------------------------------------------------------------------------------------------------
 //     ___     
-// ___/   \___
-//  jp   j
-//  P
+// ___|   |___
+//  jj   p
+//  P    N
 
 post_read_turnaround_and_push :  
-    push block side 1 [2]
-    jmp wait_fifo side 0 // TODO(gh) we probably don't need delay here?
-
+    jmp wait_fifo side 0 [2] // we rely on the fact that once we loop around, the next instruction would pull the clock line low
 // @-----------------------------------------------------------------------------------------------------------------------------------
 
-/*
-*/

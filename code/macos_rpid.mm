@@ -21,13 +21,14 @@
 // so that we can define these ourselves
 #undef internal
 #undef assert
-
+   
 #include "rpid_types.h"
 #include "rpid_intrinsic.h"
 #include "rpid_platform.h"
 #include "rpid_ftdi.cpp" 
 #include "rpid_jtag_command_buffer.cpp"
 #include "rpid_usb.cpp"
+    
 /*
    RP2040 2.4.2.8 There are no separate power domains on RP2040
    So when I read from the ctrl/stat register, both the system & debug power domain should be on? or off?

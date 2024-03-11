@@ -45,7 +45,13 @@ disable_sms\@ :
     str \disable_reg, [\pio0_clr_base, #PIO0_CTRL_OFFSET]
 .endm
 
-// gnu entry point
+.macro move_sm0_pc, sm0_base, pc_reg, pc 
+    ldr \sm0_base, =SM0_BASE
+    mov \pc_reg, #\pc
+    str \pc_reg, [\sm0_base, #SM_INSTR_OFFSET]
+.endm
+
+// gnu assembler entry point
 .global _start
 _start:
 
@@ -93,7 +99,7 @@ switch_to_xosc :
 #undef xosc_base           
 #undef xosc_set_base       
 // @-----------------------------------------------------------------------------------------------------------------------------------
-#if 1 // disable pll
+#if 1 // enable/disable pll
 /*
     PLL programming sequence 
     • Program the FBDIV(feedback divider)
@@ -192,7 +198,6 @@ gpio1_configure :  // swdclk
 
 // @-----------------------------------------------------------------------------------------------------------------------------------
     deassert_peri_reset r7, r0, r1, 10 // enable pio 0
-
 // @-----------------------------------------------------------------------------------------------------------------------------------
 config_pio_output_direction_mask :
 
@@ -217,6 +222,7 @@ store_set_pindir_instruction : // set both dio & clk to be output
 #undef pio0_set_base 
 
     // should be enough time to set the direction
+    // TODO(gh) find out the exact time
 #define iter r0
     delay iter, 32
 #undef iter
@@ -257,43 +263,54 @@ loop_load_pio0_instructions :
 // configure sm0 to be swdclk + swdio
 
 #define sm0_set_base r6
-#define s r0
+#define temp r0
 configure_sm0_pinctrl : 
     ldr sm0_set_base, =SM0_SET_BASE
 
-#if 0
-    mov s, #0
-    lsl s, #SM_PINCTRL_OUT_BASE_SHIFT
-    str s, [sm0_set_base, #SM_PINCTRL_OFFSET]
+#if 1
+    mov temp, #0
+    lsl temp, #SM_PINCTRL_OUT_BASE_SHIFT
+    str temp, [sm0_set_base, #SM_PINCTRL_OFFSET]
 
-    mov s, #0
-    lsl s, #SM_PINCTRL_SET_BASE_SHIFT
-    str s, [sm0_set_base, #SM_PINCTRL_OFFSET]
+    mov temp, #0
+    lsl temp, #SM_PINCTRL_SET_BASE_SHIFT
+    str temp, [sm0_set_base, #SM_PINCTRL_OFFSET]
 #endif
 
-    mov s, #1
-    lsl s, #SM_PINCTRL_SIDESET_BASE_SHIFT
-    str s, [sm0_set_base, #SM_PINCTRL_OFFSET]
+    mov temp, #1
+    lsl temp, #SM_PINCTRL_SIDESET_BASE_SHIFT
+    str temp, [sm0_set_base, #SM_PINCTRL_OFFSET]
 
 #if 0
-    mov s, #0
-    lsl s, #SM_PINCTRL_IN_BASE_SHIFT
-    str s, [sm0_set_base, #SM_PINCTRL_OFFSET]
+    mov temp, #0
+    lsl temp, #SM_PINCTRL_IN_BASE_SHIFT
+    str temp, [sm0_set_base, #SM_PINCTRL_OFFSET]
 #endif
 
-    mov s, #1
-    lsl s, #SM_PINCTRL_OUT_COUNT_SHIFT
-    str s, [sm0_set_base, #SM_PINCTRL_OFFSET]
+    mov temp, #1
+    lsl temp, #SM_PINCTRL_OUT_COUNT_SHIFT
+    str temp, [sm0_set_base, #SM_PINCTRL_OFFSET]
 
-    mov s, #1
-    lsl s, #SM_PINCTRL_SET_COUNT_SHIFT
-    str s, [sm0_set_base, #SM_PINCTRL_OFFSET]
+    mov temp, #1
+    lsl temp, #SM_PINCTRL_SET_COUNT_SHIFT
+    str temp, [sm0_set_base, #SM_PINCTRL_OFFSET]
 
-    mov s, #1
-    lsl s, #SM_PINCTRL_SIDESET_COUNT_SHIFT
-    str s, [sm0_set_base, #SM_PINCTRL_OFFSET]
-#undef s
+    mov temp, #1
+    lsl temp, #SM_PINCTRL_SIDESET_COUNT_SHIFT
+    str temp, [sm0_set_base, #SM_PINCTRL_OFFSET]
+#undef temp
 #undef sm0_set_base
+
+#if 1
+#define sm0_set_base r6
+#define temp r0
+configure_sm0_shiftctrl : 
+    ldr sm0_set_base, =SM0_SET_BASE
+    set_bit temp, SM_SHIFTCTRL_AUTOPULL_SHIFT // enable autopull
+    str temp, [sm0_set_base, #SM_SHIFTCTRL_OFFSET]
+#undef temp
+#undef sm0_set_base
+#endif
 
 #define sm0_base r7
 #define pc r0
@@ -316,19 +333,29 @@ configure_sm0_instr :
 
 // @-----------------------------------------------------------------------------------------------------------------------------------
 
-// TEST(gh) set arbitrary header + 32 bit 
-// and test read-write routine
+// testing autopull
+#define iter r0
+    delay iter, 32
+#undef iter
+
+/*
+    SWD 8-bit header packet
+	 ___     ___     ___     ___     ___     ___     ___     ___
+    | 1 |___|A/D|___|R/W|___|AD0|___|AD1|___|P/R|___| 0 |___| 1 |___
+     
+    A/D -> DP(0) or AP(1)
+    R/W -> Write(0) or Read(1)
+    P/R -> Parity for the preceding 4bits, 1 if the number of bits set to 1 is odd
+*/
 
 #define pio0_base r7
     ldr pio0_base, =PIO0_BASE
 
 #define header r0 // IMPORTANT(gh) need to preserve this register for retry!
 push_header : 
-    mov header, #0b01010101
+    mov header, #0b10100101 // DPIDR
     str header, [pio0_base, #SM0_TXFIFO_OFFSET]
 #undef header 
-
-#if 1
 
 #define rxempty_test_bit r1
 #define pio0_fstat r2
@@ -347,14 +374,13 @@ pull_ack :
 // TODO(gh) test ack
 #undef ack
 
-#if 1
+#if 0 // read/write test select
 // read_test
 #define sm0_base r6
 #define pc r0
-move_sm0_pc : 
-    ldr sm0_base, =SM0_BASE
-    mov pc, #26 // TODO(gh) there gotta be a better way ... 
-    str pc, [sm0_base, #SM_INSTR_OFFSET]
+    // TODO(gh) find a better way to get the program counter
+    // instead of manually counting it every time
+    move_sm0_pc sm0_base, pc, 26
 #undef pc
 #undef sm0_base
 #else
@@ -369,22 +395,13 @@ push_data :
 
 #define sm0_base r6
 #define pc r0
-move_sm0_pc : 
-    ldr sm0_base, =SM0_BASE
-    mov pc, #18 // TODO(gh) there gotta be a better way ... 
-    str pc, [sm0_base, #SM_INSTR_OFFSET]
+    move_sm0_pc sm0_base, pc, 17
 #undef pc
 #undef sm0_base
 
 #endif
 
-#if 0
-
-#endif
-#endif
-
 #undef pio0_base
-
 
 // @-----------------------------------------------------------------------------------------------------------------------------------
 
